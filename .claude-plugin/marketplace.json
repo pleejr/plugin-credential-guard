@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "pleejr",
+  "description": "Claude Code plugins published by pleejr.",
+  "owner": {
+    "name": "pleejr",
+    "email": "preston@pleejr.com"
+  },
+  "plugins": [
+    {
+      "name": "entropy-guard",
+      "source": "./",
+      "description": "Keeps high-entropy values out of the session transcript: scans tool results, tool arguments, prompts and peer deliveries with a Shannon-entropy detector and redacts what it finds.",
+      "author": {
+        "name": "pleejr",
+        "email": "preston@pleejr.com"
+      },
+      "homepage": "https://github.com/pleejr/plugin-entropy-guard",
+      "keywords": ["security", "secrets", "redaction", "hooks", "entropy"]
+    }
+  ]
+}

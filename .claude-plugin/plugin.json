@@ -1,0 +1,146 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "entropy-guard",
+  "version": "0.1.0",
+  "description": "Keeps high-entropy values out of the session transcript: scans tool results, tool arguments, prompts and peer deliveries with a Shannon-entropy detector and redacts what it finds.",
+  "author": {
+    "name": "pleejr",
+    "email": "preston@pleejr.com"
+  },
+  "userConfig": {
+    "minLength": {
+      "type": "number",
+      "description": "Shortest run of secret-alphabet characters the entropy rule will consider. A floor of 20 flags 20-23 character identifiers (HTTPCode_ELB_5XX_Count, AWSLambda_FullAccess); 24 does not, and costs no recall on the labelled corpus.",
+      "default": 24,
+      "title": "Minimum token length"
+    },
+    "entropyRatio": {
+      "type": "number",
+      "description": "Normalized entropy needed to flag a token: Shannon bits/char divided by log2(min(length,64)). 0.85 separates random keys from paths and prose.",
+      "default": 0.85,
+      "title": "Entropy threshold"
+    },
+    "exemptRatio": {
+      "type": "number",
+      "title": "Structure exemption threshold",
+      "description": "The entropy a path or identifier segment must reach before it stops counting as benign. Kept separate from entropyRatio so a nearby cue word cannot un-exempt a filesystem path.",
+      "default": 0.85
+    },
+    "hexMinLength": {
+      "type": "number",
+      "description": "Shortest pure-hex run to flag. 0 disables the hex rule.",
+      "default": 32,
+      "title": "Minimum hex length"
+    },
+    "strictHex": {
+      "type": "boolean",
+      "description": "Flag 40- and 64-character lowercase hex too. Off by default because that is every git SHA and sha256 sum.",
+      "default": false,
+      "title": "Flag git SHAs and sha256 sums"
+    },
+    "onToolResult": {
+      "type": "string",
+      "description": "What to do with findings in a tool's output.",
+      "options": [
+        "redact",
+        "off"
+      ],
+      "default": "redact",
+      "title": "On a tool result"
+    },
+    "onToolInput": {
+      "type": "string",
+      "description": "What to do with findings in a tool call's own arguments. A command cannot be redacted without breaking it, so the choice is refuse or record.",
+      "options": [
+        "warn",
+        "deny",
+        "off"
+      ],
+      "default": "warn",
+      "title": "On a tool call argument"
+    },
+    "onPrompt": {
+      "type": "string",
+      "description": "What to do with findings in a submitted prompt or a peer delivery.",
+      "options": [
+        "redact",
+        "block",
+        "off"
+      ],
+      "default": "redact",
+      "title": "On a prompt or delivery"
+    },
+    "maxScanChars": {
+      "type": "number",
+      "description": "Characters scanned per value. Past this the tail is passed through unscanned and a notice is logged.",
+      "default": 2000000,
+      "title": "Maximum characters scanned"
+    },
+    "allow": {
+      "type": "string",
+      "title": "Allowed fingerprints",
+      "description": "Comma-separated fingerprints (the 8 hex characters in a redaction marker) to stop flagging.",
+      "default": ""
+    },
+    "keychain": {
+      "type": "string",
+      "title": "macOS Keychain",
+      "description": "Offer to save each caught secret to the login Keychain so later sessions can use it: ask, save without asking, or never.",
+      "options": [
+        "ask",
+        "auto",
+        "off"
+      ],
+      "default": "ask"
+    },
+    "rehydrate": {
+      "type": "boolean",
+      "title": "Substitute placeholders back",
+      "description": "Replace a [secret:NAME] or [redacted ... #fingerprint] placeholder with the real value when a tool call runs, so a redacted secret stays usable.",
+      "default": true
+    },
+    "rehydrateEgress": {
+      "type": "boolean",
+      "title": "Substitute for tools that leave the machine",
+      "description": "Also substitute inside MCP tool calls, WebFetch and WebSearch, whose arguments are sent off this machine.",
+      "default": false
+    },
+    "proximityWindow": {
+      "type": "number",
+      "title": "Cue proximity window",
+      "description": "How many characters from a word like \"api key\", \"token\" or \"password\" a candidate still counts as announced. 0 disables the rule.",
+      "default": 60
+    },
+    "proximityRatio": {
+      "type": "number",
+      "title": "Entropy threshold near a cue",
+      "description": "The normalized entropy a candidate needs when a cue word is nearby. Lower than the ordinary threshold because the prose already said what it is.",
+      "default": 0.7
+    },
+    "announcedMinLength": {
+      "type": "number",
+      "title": "Length floor near a cue",
+      "description": "The shortest candidate still considered when a cue word or an assignment announced it. Lower than minLength because a hand-chosen password is short.",
+      "default": 16
+    },
+    "ledger": {
+      "type": "boolean",
+      "title": "Near-miss ledger",
+      "description": "Record the shape of every candidate the detector saw and let past, so the threshold can be tuned on real traffic. Shapes only — values are never recorded.",
+      "default": true
+    },
+    "ledgerMinRatio": {
+      "type": "number",
+      "title": "Lowest ratio worth recording",
+      "description": "A candidate below this normalized entropy is not worth tuning on and is not recorded.",
+      "default": 0.6
+    },
+    "ledgerMaxRows": {
+      "type": "number",
+      "title": "Maximum ledger rows",
+      "description": "Rows are pruned to this count, dropping what a threshold would learn least from. The whole plugin store is capped at 4 MiB.",
+      "default": 5000
+    }
+  },
+  "homepage": "https://github.com/pleejr/plugin-entropy-guard"
+}

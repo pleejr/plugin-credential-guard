@@ -1,0 +1,4 @@
+# Generated from the running build by `/plugin-types .claude/types`.
+# Version-specific and 450 KB; regenerate rather than commit.
+.claude/types/
+node_modules/
