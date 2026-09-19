@@ -1,13 +1,25 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "credential-guard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps credentials out of the session transcript and keeps them usable: scans tool results, tool arguments, prompts and peer deliveries, redacts what it finds behind a placeholder, and offers the macOS login Keychain so later sessions can still use it.",
   "author": {
     "name": "pleejr",
     "email": "preston@pleejr.com"
   },
   "userConfig": {
+    "shapeRules": {
+      "type": "string",
+      "title": "Where the shape-only rules run",
+      "description": "The entropy and hex rules judge a run by how it LOOKS, which is where the false positives are: a build id, a hash, an opaque resource name. The named provider patterns and the assignment rule read what the text calls the value, and run everywhere whatever this says. A person types a secret into a prompt, so prompts and deliveries are the default surface; \"prompt+result\" adds tool output, \"all\" adds tool arguments, \"off\" leaves only the rules that read the text.",
+      "options": [
+        "prompt",
+        "prompt+result",
+        "all",
+        "off"
+      ],
+      "default": "prompt"
+    },
     "minLength": {
       "type": "number",
       "description": "Shortest run of secret-alphabet characters the entropy rule will consider. A floor of 20 flags 20-23 character identifiers (HTTPCode_ELB_5XX_Count, AWSLambda_FullAccess); 24 does not, and costs no recall on the labelled corpus.",

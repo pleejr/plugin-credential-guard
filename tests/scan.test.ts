@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { entropyRatioOf, fingerprint, redactText, scan } from '../hooks/scan.ts'
+import { entropyRatioOf, fingerprint, redactText, scan, scanAll } from '../hooks/scan.ts'
 
 test('flags a random base64 key and leaves a git SHA alone', () => {
   expect(scan('token: k3Jd8vQm2XpLzRf7TnWbHy4CsGu9AeVx').length).toBe(1)
@@ -145,4 +145,25 @@ test('a published identifier stays published: a turnstile site key, an ecs task 
   // the declaration binds to the whole list, not only to its first element
   expect(scan('--tasks 0de381fa1b284946a0f3b7c25e4d19cc 9c286fe6b26048ea8c1d7f40a2b5e3d1').length).toBe(0)
   expect(scan('--tasks 0de381fa1b284946a0f3b7c25e4d19cc --key 9c286fe6b26048ea8c1d7f40a2b5e3d1').length).toBe(1)
+})
+
+test('shapeRules off keeps the rules that read what the text calls a value', () => {
+  const opts = { shapeRules: false }
+  // The entropy rule is the one that goes quiet.
+  const random = 'Xq7Vb2Np9Kd4Rt6Wm1Zy8Lc3Hj5Ff0Gs'
+  expect(scan(random).length).toBe(1)
+  expect(scan(random, opts).length).toBe(0)
+  // A named pattern and an announced assignment still fire.
+  expect(scan('ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8', opts)[0]?.rule).toBe('github-token')
+  expect(scan(`API_KEY=${random}`, opts)[0]?.rule).toBe('assigned:API_KEY')
+})
+
+test('shapeRules off still catches an access key beside its secret half', () => {
+  const pair = 'AKIAIOSFODNN7EXAMPLE and wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+  expect(scan(pair, { shapeRules: false }).some((f) => f.rule === 'aws-access-key')).toBe(true)
+})
+
+test('shapeRules off records no near miss, because no shape rule judged one', () => {
+  const text = 'HTTPCode_ELB_5XX_Count and 0de381fa1b284946a0f3b7c25e4d19cc'
+  expect(scanAll(text, { shapeRules: false }).near.length).toBe(0)
 })

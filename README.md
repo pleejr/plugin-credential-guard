@@ -30,13 +30,23 @@ and referenced by placeholder. `aws configure set aws_secret_access_key
 
 ## What it watches
 
-| Door | Event | Default |
-|---|---|---|
-| A tool's output (`cat .env`, `aws sts`, `curl`, `terraform output`) | `tool.call` return | redact |
-| A tool call's own arguments | `tool.call` input | warn |
-| What you typed or pasted | `prompt.submit` | redact |
-| What a peer session, relay or webhook delivered | `session.receive` | redact |
-| Which secrets the model may reference | `prompt.context` | listed by name |
+| Door | Event | Default | Shape rules |
+|---|---|---|---|
+| A tool's output (`cat .env`, `aws sts`, `curl`, `terraform output`) | `tool.call` return | redact | off |
+| A tool call's own arguments | `tool.call` input | warn | off |
+| What you typed or pasted | `prompt.submit` | redact | **on** |
+| What a peer session, relay or webhook delivered | `session.receive` | redact | **on** |
+| Which secrets the model may reference | `prompt.context` | listed by name | — |
+
+The last column is `shapeRules`, and it separates the two kinds of rule. A
+**named pattern** (`ghp_`, `AKIA` beside its secret half, a PEM block, a JWT)
+and an **assignment the text itself called a credential** (`API_KEY=…`) run on
+every door: they read what the text says the value IS. The **shape-only** rules
+— `entropy`, `hex`, and their `-cue` variants — judge a run by how it looks, and
+that is where the false positives live: a build id, an opaque resource name, a
+digest nobody declared. A person pastes a secret into a prompt; a tool argument
+and a tool result are mostly machine text, so shape runs on the prompt doors by
+default and `shapeRules` moves it (`prompt+result`, `all`, `off`).
 
 A finding becomes `[redacted <rule> #<fingerprint>]`. The fingerprint is FNV-1a
 of the value: the same secret reads the same everywhere, and the value itself is
@@ -265,6 +275,11 @@ recorded**, and a fingerprint does not read back into one. A ledger of
 maybe-secrets that stored the maybe-secrets would be the leak this plugin
 exists to prevent.
 
+The ledger is fed by the doors the shape rules run on, since it exists to tune
+their cut: under the default `shapeRules` it is a record of prompts, and it
+takes in tool traffic again the moment that option says `prompt+result` or
+`all`.
+
 Repeats collapse onto one row with a count, so a git SHA seen five hundred times
 is one row. Rows are pruned to `ledgerMaxRows`, dropping what a threshold would
 learn least from — seen once, and oldest. The whole plugin store is capped at
@@ -346,6 +361,7 @@ folder run `/plugin-types .claude/types` once, then `tsc -p .` typechecks.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `shapeRules` | prompt | Where `entropy`/`hex` run: `prompt`, `prompt+result`, `all`, `off` |
 | `minLength` | 24 | Shortest run the entropy rule considers |
 | `entropyRatio` | 0.85 | Normalized entropy needed to flag |
 | `exemptRatio` | 0.85 | The bar a path or identifier segment must clear to stop counting as benign |

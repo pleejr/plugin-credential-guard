@@ -59,12 +59,15 @@ test('a malformed store value degrades to an empty ledger', () => {
   expect(parseLedger({ version: 99, rows: { a: 1 } }).rows).toEqual({})
 })
 
-test('a tool result writes a ledger row through the engine', async ($, on) => {
+// The ledger watches the surfaces the shape rules run on, and `shapeRules`
+// defaults to `prompt`: a tool result contributes nothing until that option
+// says `prompt+result` or `all`.
+test('a prompt writes a ledger row through the engine', async ($, on) => {
   mock.clock(on)
   mock.store(on)
-  on('tool.call', () => ({ result: { stdout: `build id ${WEAK}`, stderr: '', interrupted: false } }))
+  on('prompt.submit', ($$, e) => ({ text: e.text }))
 
-  await $.tool.call({ tool: 'Bash', command: 'make id' })
+  await $.prompt.submit({ text: `build id ${WEAK}`, wait: false, origin: { kind: 'composer' } })
   const out = await $.command.run({
     command: 'credential-guard',
     args: '',

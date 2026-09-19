@@ -45,6 +45,8 @@ type ResultAction = 'redact' | 'off'
 type InputAction = 'warn' | 'deny' | 'off'
 type PromptAction = 'redact' | 'block' | 'off'
 type KeychainMode = 'ask' | 'auto' | 'off'
+/** Which surfaces the shape-only rules (`entropy`, `hex`, `-cue`) run on. */
+type ShapeScope = 'prompt' | 'prompt+result' | 'all' | 'off'
 
 /** Tools whose arguments leave this machine. A placeholder is not expanded for
  *  one of these unless `rehydrateEgress` says so. */
@@ -91,6 +93,17 @@ let ledgerOn = true
 let ledgerMaxRows = 5000
 
 let scanOpts: Partial<ScanOptions> = {}
+/**
+ * `scanOpts` with the shape-only rules turned on or off for each surface. A
+ * person types a secret into a PROMPT; a tool's arguments and its output are
+ * mostly machine text, where a random-looking run is far likelier to be an
+ * identifier than a key -- so shape is scoped, and the rules that read what the
+ * text calls a value keep running everywhere.
+ */
+let promptOpts: Partial<ScanOptions> = {}
+let resultOpts: Partial<ScanOptions> = {}
+let inputOpts: Partial<ScanOptions> = {}
+let shapeScope: ShapeScope = 'prompt'
 let onToolResult: ResultAction = 'redact'
 let onToolInput: InputAction = 'warn'
 let onPrompt: PromptAction = 'redact'
@@ -117,22 +130,22 @@ async function loadTrust($: EngineInterface): Promise<void> {
   const path = trustFile.startsWith('~/') && home !== '' ? home + trustFile.slice(1) : trustFile
   try {
     if (!(await $.fs.exists(path))) {
-      $.ui.log(`credential-guard: no trust list at ${path} -- trusting nothing`, { to: 'debug' })
+      $.ui.log(`no trust list at ${path} -- trusting nothing`, { to: 'debug' })
       return
     }
     const parsed = parseTrust(JSON.parse(await $.fs.read(path)))
     if (parsed.error !== undefined) {
-      $.ui.log(`credential-guard: the trust list at ${path} is unusable (${parsed.error}) -- trusting nothing`)
+      $.ui.log(`the trust list at ${path} is unusable (${parsed.error}) -- trusting nothing`)
       return
     }
     for (const fp of parsed.fingerprints) allowSet.add(fp)
     $.ui.log(
-      `credential-guard: trusting ${parsed.fingerprints.size} fingerprint(s) vouched for on ${parsed.generatedAt}` +
+      `trusting ${parsed.fingerprints.size} fingerprint(s) vouched for on ${parsed.generatedAt}` +
         `${parsed.refused > 0 ? `, ${parsed.refused} refused at generation` : ''}`,
       { to: 'debug' },
     )
   } catch (e) {
-    $.ui.log(`credential-guard: could not read the trust list at ${path} (${String(e)}) -- trusting nothing`)
+    $.ui.log(`could not read the trust list at ${path} (${String(e)}) -- trusting nothing`)
   }
 }
 
@@ -154,7 +167,7 @@ async function flushLedger($: EngineInterface): Promise<void> {
   if (!ledgerDirty || ledger === null) return
   ledgerDirty = false
   const dropped = prune(ledger, ledgerMaxRows)
-  if (dropped > 0) $.ui.log(`credential-guard: pruned ${dropped} ledger row(s) to stay under ${ledgerMaxRows}`, { to: 'debug' })
+  if (dropped > 0) $.ui.log(`pruned ${dropped} ledger row(s) to stay under ${ledgerMaxRows}`, { to: 'debug' })
   await $.store.set(LEDGER_KEY, ledger)
 }
 
@@ -169,13 +182,13 @@ async function noteNear($: EngineInterface, near: readonly NearMiss[], tool: str
 async function save($: EngineInterface, fp: string, label: string, rule: string, value: string): Promise<boolean> {
   const r = await keychainSave(runner($), fp, label, rule, value)
   if (!r.ok) {
-    $.ui.log(`credential-guard: the Keychain refused #${fp} — ${r.error}`)
+    $.ui.log(`the Keychain refused #${fp} — ${r.error}`)
     return false
   }
   const idx = await loadIndex($)
   idx[fp] = { label, rule, savedAt: Date.now() }
   await $.store.set(INDEX_KEY, idx)
-  $.ui.log(`credential-guard: saved #${fp} to your login Keychain as [secret:${label}]`)
+  $.ui.log(`saved #${fp} to your login Keychain as [secret:${label}]`)
   return true
 }
 
@@ -269,11 +282,14 @@ async function resolveRefs($: EngineInterface, text: string): Promise<Map<string
   return out
 }
 
-function redactAll(list: readonly string[] | undefined): { list: string[] | undefined; findings: Finding[] } {
+function redactAll(
+  list: readonly string[] | undefined,
+  opts: Partial<ScanOptions>,
+): { list: string[] | undefined; findings: Finding[] } {
   if (list === undefined) return { list: undefined, findings: [] }
   const findings: Finding[] = []
   const out = list.map((s) => {
-    const r = redactText(s, scanOpts)
+    const r = redactText(s, opts)
     findings.push(...r.findings)
     return r.text
   })
@@ -300,6 +316,10 @@ export const register: Register = (on, options) => {
   for (const fp of fingerprints(options.allow)) allowSet.add(fp)
   trustFile = typeof options.trustFile === 'string' ? options.trustFile : ''
   trustLoaded = false
+  shapeScope = pick<ShapeScope>(options.shapeRules, ['prompt', 'prompt+result', 'all', 'off'], 'prompt')
+  promptOpts = { ...scanOpts, shapeRules: shapeScope !== 'off' }
+  resultOpts = { ...scanOpts, shapeRules: shapeScope === 'prompt+result' || shapeScope === 'all' }
+  inputOpts = { ...scanOpts, shapeRules: shapeScope === 'all' }
   onToolResult = pick<ResultAction>(options.onToolResult, ['redact', 'off'], 'redact')
   onToolInput = pick<InputAction>(options.onToolInput, ['warn', 'deny', 'off'], 'warn')
   onPrompt = pick<PromptAction>(options.onPrompt, ['redact', 'block', 'off'], 'redact')
@@ -324,8 +344,8 @@ export const register: Register = (on, options) => {
       $.clock.every(30_000, () => void flushLedger($))
     }
     $.ui.log(
-      `credential-guard: output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, ` +
-        `keychain ${keychain}, rehydrate ${rehydrateOn}; ${held} secret(s) held.`,
+      `output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, ` +
+        `shape rules on ${shapeScope}, keychain ${keychain}, rehydrate ${rehydrateOn}; ${held} secret(s) held.`,
       { to: 'debug' },
     )
     return r
@@ -354,12 +374,12 @@ export const register: Register = (on, options) => {
     const raw = JSON.stringify(e)
 
     if (onToolInput !== 'off') {
-      const findings = redactText(raw, scanOpts).findings
+      const findings = redactText(raw, inputOpts).findings
       if (findings.length > 0) {
         if (onToolInput === 'deny') {
           count += findings.length
           $.ui.status(`credential-guard: ${count} caught`)
-          $.ui.log(`credential-guard: refused ${e.tool} — its arguments carry ${describe(findings)}`)
+          $.ui.log(`refused ${e.tool} — its arguments carry ${describe(findings)}`)
           await capture($, findings)
           return {
             deny:
@@ -368,7 +388,7 @@ export const register: Register = (on, options) => {
               `from the environment inside the command, instead of writing it into the call.`,
           }
         }
-        $.ui.log(`credential-guard: ${e.tool} arguments carry ${describe(findings)} (recorded, not blocked)`)
+        $.ui.log(`${e.tool} arguments carry ${describe(findings)} (recorded, not blocked)`)
         await capture($, findings)
       }
     }
@@ -380,27 +400,27 @@ export const register: Register = (on, options) => {
         const swapped = rehydrateValue(e, (id) => values.get(id))
         if (swapped.used.length > 0) {
           down = swapped.value as typeof e
-          $.ui.log(`credential-guard: substituted ${swapped.used.length} held secret(s) into ${e.tool}`)
+          $.ui.log(`substituted ${swapped.used.length} held secret(s) into ${e.tool}`)
         }
       }
     } else if (rehydrateOn && EGRESS.test(e.tool) && referencesIn(raw).fingerprints.length + referencesIn(raw).labels.length > 0) {
-      $.ui.log(`credential-guard: left placeholders alone in ${e.tool} — it sends arguments off this machine`)
+      $.ui.log(`left placeholders alone in ${e.tool} — it sends arguments off this machine`)
     }
 
     const r = await next(down)
     if (onToolResult === 'off') return r
     if (r.deny !== undefined) return r
 
-    const body = redactValue(r.result, scanOpts)
-    const ctx = redactAll(r.context)
-    const text = typeof r.text === 'string' ? redactText(r.text, scanOpts) : undefined
+    const body = redactValue(r.result, resultOpts)
+    const ctx = redactAll(r.context, resultOpts)
+    const text = typeof r.text === 'string' ? redactText(r.text, resultOpts) : undefined
     const findings = [...body.findings, ...ctx.findings]
     await noteNear($, body.near, e.tool)
     if (findings.length === 0) return r
 
     count += findings.length
     $.ui.status(`credential-guard: ${count} caught`)
-    $.ui.log(`credential-guard: redacted ${findings.length} value(s) from ${e.tool} — ${describe(findings)}`)
+    $.ui.log(`redacted ${findings.length} value(s) from ${e.tool} — ${describe(findings)}`)
     await capture($, findings)
 
     // `ref` is dropped on purpose: keeping it makes core record its own
@@ -411,7 +431,7 @@ export const register: Register = (on, options) => {
     return { result: body.value as typeof r.result, context: ctx.list }
   }).catch(($, e, next) => {
     $.ui.log(
-      `credential-guard: the guard failed on ${e.tool} (${next.error.kind}: ${next.error.message ?? 'no message'}) — ` +
+      `the guard failed on ${e.tool} (${next.error.kind}: ${next.error.message ?? 'no message'}) — ` +
         `this call's output was NOT scanned`,
     )
     return undefined
@@ -420,8 +440,8 @@ export const register: Register = (on, options) => {
   // --- what the person typed or pasted --------------------------------------
   on('prompt.submit', async ($, e, next) => {
     if (onPrompt === 'off') return next(e)
-    const prompt = redactText(e.text, scanOpts)
-    const ctx = redactAll(e.context)
+    const prompt = redactText(e.text, promptOpts)
+    const ctx = redactAll(e.context, promptOpts)
     const findings = [...prompt.findings, ...ctx.findings]
     await noteNear($, prompt.near, 'prompt')
     if (findings.length === 0) return next(e)
@@ -430,22 +450,22 @@ export const register: Register = (on, options) => {
     $.ui.status(`credential-guard: ${count} caught`)
     await capture($, findings)
     if (onPrompt === 'block') {
-      $.ui.log(`credential-guard: held back your prompt — it carries ${describe(findings)}`)
+      $.ui.log(`held back your prompt — it carries ${describe(findings)}`)
       return {
-        drop: `credential-guard: the prompt carries ${findings.length} high-entropy value(s) (${describe(findings)}) and was not sent.`,
+        drop: `the prompt carries ${findings.length} high-entropy value(s) (${describe(findings)}) and was not sent.`,
       }
     }
-    $.ui.log(`credential-guard: redacted ${findings.length} value(s) from your prompt — ${describe(findings)}`)
+    $.ui.log(`redacted ${findings.length} value(s) from your prompt — ${describe(findings)}`)
     return next({ ...e, text: prompt.text, context: ctx.list })
   }).catch(($, e, next) => {
-    $.ui.log(`credential-guard: the guard failed on your prompt (${next.error.kind}) — it was NOT scanned`)
+    $.ui.log(`the guard failed on your prompt (${next.error.kind}) — it was NOT scanned`)
     return undefined
   })
 
   // --- what a peer session, relay or webhook delivered ----------------------
   on('session.receive', async ($, e, next) => {
     if (onPrompt === 'off') return next(e)
-    const body = redactText(e.text, scanOpts)
+    const body = redactText(e.text, promptOpts)
     await noteNear($, body.near, `delivery:${e.origin.kind}`)
     if (body.findings.length === 0) return next(e)
 
@@ -453,14 +473,14 @@ export const register: Register = (on, options) => {
     $.ui.status(`credential-guard: ${count} caught`)
     await capture($, body.findings)
     $.ui.log(
-      `credential-guard: redacted ${body.findings.length} value(s) from a ${e.origin.kind} delivery — ${describe(body.findings)}`,
+      `redacted ${body.findings.length} value(s) from a ${e.origin.kind} delivery — ${describe(body.findings)}`,
     )
     if (onPrompt === 'block') {
-      return { consumed: `credential-guard: the delivery carried ${body.findings.length} high-entropy value(s) and was not queued.` }
+      return { consumed: `the delivery carried ${body.findings.length} high-entropy value(s) and was not queued.` }
     }
     return next({ ...e, text: body.text })
   }).catch(($, e, next) => {
-    $.ui.log(`credential-guard: the guard failed on a ${e.origin.kind} delivery (${next.error.kind}) — it was NOT scanned`)
+    $.ui.log(`the guard failed on a ${e.origin.kind} delivery (${next.error.kind}) — it was NOT scanned`)
     return undefined
   })
 }
