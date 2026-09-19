@@ -112,6 +112,46 @@ export function rehydrateValue(value: unknown, lookup: (id: string) => string | 
  * The value goes in on stdin (`-w` with no argument reads it, twice), so it is
  * never an argument of a process anyone can list.
  */
+/**
+ * The value as hexadecimal UTF-8, which is what `-X` takes.
+ *
+ * `encodeURIComponent` rather than `TextEncoder`: a hooks module has no Node
+ * and no DOM, and this is core ECMAScript.
+ */
+function toHex(value: string): string {
+  const encoded = encodeURIComponent(value)
+  let out = ''
+  for (let i = 0; i < encoded.length; i += 1) {
+    if (encoded[i] === '%') {
+      out += encoded.slice(i + 1, i + 3).toLowerCase()
+      i += 2
+    } else {
+      out += (encoded.charCodeAt(i) & 0xff).toString(16).padStart(2, '0')
+    }
+  }
+  return out
+}
+
+/** A double-quoted `security -i` argument, stripped of what its parser would eat. */
+function quoted(s: string): string {
+  return `"${s.replace(/[^\x20-\x7e]/g, ' ').replace(/["\\]/g, '')}"`
+}
+
+/**
+ * Writes the value to the login Keychain without it touching argv or a prompt.
+ *
+ * `add-generic-password -w` with no value does NOT read standard input: it
+ * calls readpassphrase, which opens the CONTROLLING TERMINAL. A hooks module's
+ * child inherits the interactive session's terminal, so the prompt went there,
+ * the piped value was never read, and the call was killed at its timeout --
+ * silently, because a killed call rejects rather than returning a code. Piping
+ * the value works only where there is no terminal at all, which is why a
+ * headless probe passed and every real session hung.
+ *
+ * `-i` takes the command itself on standard input, so nothing reaches the
+ * process table, and `-X` takes the value as hexadecimal, which the parser's
+ * whitespace splitting cannot damage.
+ */
 export async function keychainSave(
   run: Run,
   fingerprint: string,
@@ -119,20 +159,24 @@ export async function keychainSave(
   rule: string,
   value: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const r = await run(
-    [
-      'security', 'add-generic-password',
-      '-U',
-      '-a', fingerprint,
-      '-s', SERVICE,
-      '-l', `credential-guard: ${label}`,
-      '-D', 'credential-guard secret',
-      '-j', `${rule}; saved by the credential-guard Claude Code plugin`,
-      '-w',
-    ],
-    { stdin: `${value}\n${value}\n`, timeoutMs: 30_000 },
-  )
-  return r.exitCode === 0 ? { ok: true } : { ok: false, error: (r.stderr || r.stdout).trim() }
+  const hex = toHex(value)
+  const command = [
+    'add-generic-password',
+    '-U',
+    '-a', fingerprint,
+    '-s', SERVICE,
+    '-l', quoted(`credential-guard: ${label}`),
+    '-D', quoted('credential-guard secret'),
+    '-j', quoted(`${rule}; saved by the credential-guard Claude Code plugin`),
+    '-X', hex,
+  ].join(' ')
+
+  const r = await run(['security', '-i'], { stdin: `${command}\n`, timeoutMs: 30_000 })
+  if (r.exitCode === 0) return { ok: true }
+  // `security -i` echoes the command it refused, so the error is scrubbed of
+  // the value before it can be logged.
+  const error = (r.stderr || r.stdout).trim().split(hex).join('[value]')
+  return { ok: false, error }
 }
 
 /** The value under this fingerprint, or undefined when the Keychain has none. */
