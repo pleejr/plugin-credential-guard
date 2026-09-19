@@ -111,6 +111,19 @@ const CLEAN: readonly (readonly [string, string])[] = [
   ['jenkins build id', 'service-polling-deploy-qa-build-2481'],
   ['s3 key', 's3://example-prod-artifacts/service-reports/releases/2026-09-18/service-reports-3.14.2.tar.gz'],
   ['terraform state address', "aws_iam_role_policy_attachment.this[\"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore\"]"],
+  // --- measured on this operator's own traffic, 2026-09-18: a 2301-file wiki
+  // vault and 8957 shell commands. Every one of these was a false positive of
+  // the assignment rule, which lowered the entropy bar without running the
+  // structural filters the entropy path runs first.
+  ['yaml secrets block', 'secrets: TERRAFORM_TOKEN: required: true'],
+  ['markdown secrets label', 'Secrets: encrypted env/*.ejson decrypted locally to .env files (make env).'],
+  ['command substitution', 'TOKEN=$(jq -r .credentials.token ~/.terraform.d/credentials.tfrc.json)'],
+  ['python fragment', 'SECRET_RE = re.compile(r"[0-9a-f]{12}")'],
+  ['elided credential id', 'CREDENTIAL_ID=32b00056-\u2026 was the real BitBucket access key'],
+  ['held secret placeholder', 'aws configure set aws_secret_access_key [secret:AWS_PROD]'],
+  ['jq path ending in a brace', "aws rds describe-db-clusters --query 'DBClusters[0].{Secret:MasterUserSecret}'"],
+  ['ecs task ids', 'aws ecs describe-tasks --cluster employee_tournaments --tasks 0de381fa1b284946a0f3b7c25e4d19cc 9c286fe6b26048ea8c1d7f40a2b5e3d1'],
+  ['turnstile site key', 'the widget renders with 0x4AAAAAABc1dEfGhIjKlMnO in the page'],
 ]
 
 let tp = 0

@@ -70,6 +70,9 @@ const PUBLIC_LEAD = new RegExp(
         'site[\\s_-]?key', 'sitekey', 'issuer', 'subject', 'checksums?', 'digest',
         'commit', 'sha', 'etag', 'accounts?', 'tenants?', 'wallet', 'address',
         'request[\\s_-]?id', 'trace[\\s_-]?id', 'correlation[\\s_-]?id',
+        // An ECS task id is 32 lowercase hex and appears in every describe-tasks
+        // call: measured 6 times in 8957 shell commands to 2026-09-18.
+        'tasks?', 'task[\\s_-]?ids?',
       ].join('|') +
       String.raw`)\b["'\`\s:=(,-]{0,8}$`,
     // The path of an ordinary URL. A query string is excluded on purpose --
@@ -92,7 +95,7 @@ const KNOWN_PUBLIC: readonly (readonly [string, RegExp])[] = [
   // Vercel project and team ids appear in every deployment URL.
   ['vercel-id', /^(?:prj|team)_[A-Za-z0-9]{16,}$/],
   // A Cloudflare Turnstile SITE key is the half meant to be in the page.
-  ['turnstile-site-key', /^0x4AAAAAAA[A-Za-z0-9_-]{8,}$/],
+  ['turnstile-site-key', /^0x4AAAA[A-Za-z0-9_-]{12,}$/],
   // RDS and DocumentDB cluster resource ids, which name a Secrets Manager path.
   ['aws-cluster-resource-id', /^cluster-[A-Z0-9]{20,}$/],
   // A Jenkins plugin version: `1511.v2e3cb_0008e`.
@@ -453,6 +456,50 @@ function hasSecretNeighbour(body: string, start: number, length: number, o: Scan
   return false
 }
 
+/**
+ * A name written as CODE (`API_KEY`, `client_secret`, `apiKey`, `password`)
+ * rather than as prose (`**Secrets:** ejson-managed`, `Credentials: rotated`).
+ * The one-word exception below exists for `PASSWORD=hunter`, where a person
+ * chose a weak value; a capitalized markdown label followed by a colon is a
+ * sentence, and the word after it is what the sentence says, not a credential.
+ */
+function isCodeName(name: string): boolean {
+  return /^[A-Z0-9_]+$/.test(name) || /_/.test(name) || /^[a-z][A-Za-z0-9]*$/.test(name)
+}
+
+/**
+ * An assignment's right-hand side that is not a value at all. The NAME already
+ * said "secret", so the entropy bar is down to 0.55 -- which is where every
+ * identifier, YAML key and shell fragment on the line clears it. The entropy
+ * path rejects these structurally BEFORE it measures a single bit; this is that
+ * same rejection, applied where the name lowered the bar. Measured over a
+ * 2301-file markdown vault and 8935 shell commands on 2026-09-18: the
+ * assignment rule produced 15 of the vault's 27 findings and 27 of the shell's
+ * 52, every one of them an identifier, a key name or a shell fragment.
+ */
+function assignedIsStructural(value: string, name: string, o: ScanOptions): boolean {
+  // An elision is what a careful note writes INSTEAD of the credential, so
+  // flagging `CREDENTIAL_ID=32b00056-\u2026` redacts a redaction.
+  if (/\u2026|\.\.\.$/.test(value)) return true
+  // A YAML key or a variable name, not its value: `secrets: TERRAFORM_TOKEN:
+  // required: true` names the secret a workflow needs and carries none of it.
+  if (value.endsWith(':')) return true
+  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value)) return true
+  // Shell and code punctuation a credential cannot carry: `TOKEN=$(python3 -c
+  // ...)`, `re.compile(r`, `MasterUserSecret}`. What follows the `=` is an
+  // expression that PRODUCES the secret; the secret itself is not on the line.
+  if (/[(){}\[\]\\]/.test(value) || value.startsWith('$')) return true
+  // A path is never a credential, whatever the name beside it says.
+  if (looksLikePath(value, o)) return true
+  // The VOCABULARY suppressors are gated on the name, for the same reason the
+  // one-word exception above is: `TOKEN` and `CREDENTIAL_ID` name config
+  // attributes constantly and their values are identifiers, while a value under
+  // `PASSWORD` or `SECRET` is allowed to be spelled out of words -- a password a
+  // person chose usually is, and it is still a password.
+  if (/secret|password|passwd|private_?key/i.test(name)) return false
+  return looksLikeIdentifier(value, o) || looksLikeName(value)
+}
+
 /** The entropy rule, applied to one candidate run. */
 function judge(t: string, o: ScanOptions, depth: number): Judgement {
   const ratioOf = (): number => entropyRatioOf(t)
@@ -567,13 +614,14 @@ export function scanAll(
     if (/^[a-z]+$/.test(name) && !/^(?:secret|password|passwd|token|credential|apikey)s?$/.test(name)) continue
     // A published identifier, and a value spelled out of words, are not keys.
     if (isKnownPublic(value)) continue
+    if (assignedIsStructural(value, name, o)) continue
     // `http_tokens = "required"` is config; `PASSWORD=correcthorse` is not.
     // A one-word value is let past only when the name is a weak signal --
     // "token" and "credential" name config attributes constantly, "secret"
     // and "password" do not.
     if (looksLikeWords(value)) {
       const multiWord = value.split('-').filter((x) => x.length > 0).flatMap(camelWords).length >= 2
-      if (multiWord || !/secret|password|passwd|private_?key/i.test(name)) continue
+      if (multiWord || !/secret|password|passwd|private_?key/i.test(name) || !isCodeName(name)) continue
     }
     const fp = fingerprint(value)
     if (o.allow.has(fp)) continue
@@ -589,6 +637,11 @@ export function scanAll(
   }
 
   const cues = o.proximityWindow > 0 ? cuePositions(body) : []
+  // Where the last candidate a declaration covered ended, so the declaration can
+  // bind to a LIST rather than to its first element only. `--tasks <id> <id>`
+  // declares both, and measuring it showed the second one flagged while the
+  // first passed. -1 once anything but a separator intervenes.
+  let declaredEnd = -1
   TOKEN.lastIndex = 0
   for (const m of body.matchAll(TOKEN)) {
     const value = m[0]
@@ -602,7 +655,10 @@ export function scanAll(
     // ssh public key fingerprint and `serial = <40 hex>` a certificate serial;
     // both clear 0.85 and neither is a credential.
     const lead = body.slice(Math.max(0, start - PUBLIC_LEAD_WINDOW), start)
-    if (PUBLIC_LEAD.test(lead)) {
+    const inherited = declaredEnd >= 0 && /^[\s,]+$/.test(body.slice(declaredEnd, start))
+    declaredEnd = -1
+    if (PUBLIC_LEAD.test(lead) || inherited) {
+      declaredEnd = end
       if (depth === 0 && value.length >= o.minLength) {
         const ratio = entropyRatioOf(value)
         if (ratio >= o.ledgerMinRatio) {

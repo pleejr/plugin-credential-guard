@@ -122,3 +122,27 @@ test('a long CamelCase word inside an identifier does not make it key material',
 test('a one-word value still counts when the name says password', () => {
   expect(scan('PASSWORD=correcthorse').length).toBe(1)
 })
+
+test('an assignment whose value is a key name or a shell fragment is not a credential', () => {
+  expect(scan('secrets: TERRAFORM_TOKEN: required: true').length).toBe(0)
+  expect(scan('TOKEN=$(jq -r .credentials.token ~/.terraform.d/credentials.tfrc.json)').length).toBe(0)
+  expect(scan('SECRET_RE = re.compile(r"[0-9a-f]{12}")').length).toBe(0)
+  expect(scan("aws rds describe-db-clusters --query 'DBClusters[0].{Secret:MasterUserSecret}'").length).toBe(0)
+})
+
+test('a prose label does not make the word after it a secret', () => {
+  expect(scan('Secrets: encrypted env/*.ejson decrypted locally to .env files.').length).toBe(0)
+})
+
+test('an elided credential id is a redaction, not a leak', () => {
+  expect(scan('CREDENTIAL_ID=32b00056-… was the real BitBucket access key').length).toBe(0)
+  expect(scan('aws configure set aws_secret_access_key [secret:AWS_PROD]').length).toBe(0)
+})
+
+test('a published identifier stays published: a turnstile site key, an ecs task id', () => {
+  expect(scan('the widget renders with 0x4AAAAAABc1dEfGhIjKlMnO in the page').length).toBe(0)
+  expect(scan('aws ecs describe-tasks --tasks 0de381fa1b284946a0f3b7c25e4d19cc').length).toBe(0)
+  // the declaration binds to the whole list, not only to its first element
+  expect(scan('--tasks 0de381fa1b284946a0f3b7c25e4d19cc 9c286fe6b26048ea8c1d7f40a2b5e3d1').length).toBe(0)
+  expect(scan('--tasks 0de381fa1b284946a0f3b7c25e4d19cc --key 9c286fe6b26048ea8c1d7f40a2b5e3d1').length).toBe(1)
+})
