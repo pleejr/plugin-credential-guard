@@ -12,7 +12,7 @@ test('normalized entropy separates key material from a filesystem path', () => {
 })
 
 test('named patterns fire regardless of length or entropy', () => {
-  expect(scan('AKIAIOSFODNN7EXAMPLE')[0]?.rule).toBe('aws-access-key')
+  expect(scan('AKIAIOSFODNN7EXAMPLE', { flagAwsKeyIds: true })[0]?.rule).toBe('aws-access-key')
   expect(scan('sk_live_' + '4eC39HqLyjWDarjtT1zdp7dc')[0]?.rule).toBe('stripe-key')
 })
 
@@ -93,6 +93,30 @@ test('a cue word lowers the length floor without un-exempting the path around it
 test('a service namespace is not a credential name', () => {
   expect(scan('the role needs secretsmanager:GetSecretValue').length).toBe(0)
   expect(scan('metadata_options { http_tokens = "required" }').length).toBe(0)
+})
+
+test('what sits before a value can declare it public', () => {
+  expect(scan('fingerprint `SHA256:hjoBns2C9Wxq57SjAAtaY3bpXUKkiVdJQ1w2e3R4t5Y`').length).toBe(0)
+  expect(scan('serial = 5E386EADB55F01504CAE8BCF7198F4B714ABFC68').length).toBe(0)
+  expect(scan('`AUTH0_CLIENT_ID` = `aBcD3fGh1JkLmN0pQrStUvWxYz123456`').length).toBe(0)
+  expect(scan('against account `0D8784105F40400308CE42C527B85A02`').length).toBe(0)
+})
+
+test('a declaration does not reach past its window or into a query string', () => {
+  const key = 'Xq7vKpL2ZmR8tNwB4dHc9YgT3sFj6QaZ'
+  expect(scan(`fingerprint ${'.'.repeat(60)} ${key}`).length).toBe(1)
+  expect(scan(`https://example.com/callback?token=${key}`).length).toBe(1)
+})
+
+test('an access key id counts only with its secret half beside it', () => {
+  const id = 'AKIA' + 'IOSFODNN7EXAMPLE'
+  expect(scan(`key ${id} active since 2026-02-20`).length).toBe(0)
+  expect(scan(`key ${id} active since 2026-02-20`, { flagAwsKeyIds: true }).length).toBe(1)
+  expect(scan(`${id} / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`).length).toBeGreaterThan(0)
+})
+
+test('a long CamelCase word inside an identifier does not make it key material', () => {
+  expect(scan('max_connections is LEAST({DBInstanceClassMemory},5000)').length).toBe(0)
 })
 
 test('a one-word value still counts when the name says password', () => {
