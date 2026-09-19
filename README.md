@@ -77,7 +77,14 @@ So a flag needs a **conjunction**, and entropy is one clause of it:
    a weak password is still a secret. The name has to *be* the credential word,
    though — `secretsmanager:GetSecretValue` is a service namespace, not a
    variable called SECRET — and a value spelled out of words (`required`,
-   `GetSecretValue`) is config, not a key.
+   `GetSecretValue`) is config, not a key. **Lowering the entropy bar does not
+   lower the structural ones**: the value still has to be a value. A YAML key
+   (`secrets: TERRAFORM_TOKEN:`), a shell fragment (`TOKEN=$(jq …)`,
+   `re.compile(r`, `MasterUserSecret}`), an elision (`CREDENTIAL_ID=32b00056…`),
+   this plugin's own placeholder (`[secret:AWS_PROD]`) and a path are rejected
+   before a single bit is measured; under a name that is only a weak signal —
+   `TOKEN`, `CREDENTIAL_ID` — so is an identifier, while `PASSWORD` and
+   `SECRET` keep the one-word exception a chosen password needs.
 3. **Proximity to a cue word** does the same in prose. Within 60 characters of
    "api key", "token", "password", "credentials", "bearer" and kin, the bar
    drops to 0.70 **and the length floor drops to 16** — a person who writes
@@ -97,7 +104,9 @@ So a flag needs a **conjunction**, and entropy is one clause of it:
    because the token regex stops at `:` and at whitespace, so it can only be
    seen by looking behind: 48 characters, no further, and a URL's query string
    is excluded on purpose, since `?token=<value>` is the leak this exists to
-   catch.
+   catch. A declaration binds to the LIST it introduces, not to its first
+   element only: `--tasks <id> <id>` declares both, and a run of separators is
+   what holds the list together.
 5. **An AWS access key ID is an identifier until its secret is beside it.** An
    `AKIA` appears in every IAM listing, CloudTrail event and audit note; the
    40-character secret access key is the credential. So a lone key ID is let
@@ -127,26 +136,40 @@ every commit id would make the plugin unusable. Set `strictHex` to catch them.
 
 ## Measured
 
-`node --experimental-strip-types bench/corpus.ts` — 26 labelled secrets, 64
+`node --experimental-strip-types bench/corpus.ts` — 26 labelled secrets, 73
 labelled clean samples drawn from ordinary infrastructure session traffic (git
 log, terraform plan, ARNs, k8s names, npm integrity, AWS CLI JSON, paths, URLs,
 and prose that merely mentions keys and tokens).
 
 ```
 secrets caught     26/26
-clean passed       64/64
+clean passed       73/73
 ```
 
 That is the corpus in `bench/corpus.ts`, not a claim about the field. Add your
 own false positives and false negatives there; it exits non-zero on any miss.
 
-Measured against the same 2293-file vault, with the detector as it stands:
+Measured against the same vault — 2293 files when the first three columns
+were taken, 2301 when the fourth was, on 2026-09-18:
 
-| | floor 20, entropy only | conjunction | + public declarations |
-|---|---|---|---|
-| all findings | 1750 | 180 | 27 |
-| `entropy` + `hex` | 1586 | 118 | 12 |
-| labelled recall | 26/26 | 26/26 | 26/26 |
+| | floor 20, entropy only | conjunction | + public declarations | + structural assignment |
+|---|---|---|---|---|
+| all findings | 1750 | 180 | 27 | 11 |
+| `entropy` + `hex` | 1586 | 118 | 12 | 6 |
+| `assigned:*` | — | — | 15 | 0 |
+| labelled recall | 26/26 | 26/26 | 26/26 | 26/26 |
+
+**The assignment rule was the noise, and entropy was not.** Measured 2026-09-18
+over 8970 `Bash` commands from 386 session transcripts, alongside the vault
+column above: `assigned:*` produced 27 of the 52 findings that were neither a
+test fixture nor a redaction marker, every one of them a key name, a shell
+fragment or an identifier — `TOKEN=$(python3`, `MasterUserSecret}`,
+`secrets: TERRAFORM_TOKEN:`. Running the structural filters on that path took it
+to 3, and binding a public declaration to its list took `hex` from 10 to 4.
+Removing the entropy family instead, as the shape of the noise first suggested,
+costs 11 of the 26 labelled secrets — the AWS secret access key, both hex keys,
+every base64 key and everything announced in prose — and would have left the
+class that was actually firing untouched.
 
 **A clean corpus is not a clean field, and this one proved it.** The corpus
 scored 49/49 while the same detector produced 1750 findings over 2293 markdown
