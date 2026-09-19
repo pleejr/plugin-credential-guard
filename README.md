@@ -83,21 +83,35 @@ So a flag needs a **conjunction**, and entropy is one clause of it:
    *detection* bar only; `exemptRatio` holds the *exemption* bar steady, so a
    path like `…/skills/handle-a-found-credential/SKILL.md` does not stop being
    a path merely because it contains the word "credential".
-4. **Shape suppressors** drop what looks random and is not: UUIDs, AWS resource
+4. **A public declaration to the left** puts a value out of reach, the way a cue
+   word to the left brings one into it. `fingerprint SHA256:<43 characters>` is
+   an ssh public key fingerprint, `serial = <40 hex>` a certificate serial,
+   `AUTH0_CLIENT_ID = <32 characters>` an OAuth client id — all three clear 0.85
+   and none is a credential. The declaring word is never part of the candidate,
+   because the token regex stops at `:` and at whitespace, so it can only be
+   seen by looking behind: 48 characters, no further, and a URL's query string
+   is excluded on purpose, since `?token=<value>` is the leak this exists to
+   catch.
+5. **An AWS access key ID is an identifier until its secret is beside it.** An
+   `AKIA` appears in every IAM listing, CloudTrail event and audit note; the
+   40-character secret access key is the credential. So a lone key ID is let
+   past, and the pair is flagged when a secret-shaped run sits within
+   `pairWindow` characters. Set `flagAwsKeyIds` to catch a lone one.
+6. **Shape suppressors** drop what looks random and is not: UUIDs, AWS resource
    ids (`ami-`, `i-`, `subnet-`, `sgr-`…), Terraform Cloud ids (`run-`, `ws-`,
    `trig_`…), git refs, `sha512-` content hashes, filesystem paths and URLs
    (most segments are lowercase names, a segment may begin with `.` or `-`, and
    no single segment is itself key material — a UUID branch or a commit sha
    inside one does not make the path a secret), and hyphenated names
    (`service-watchtower-processor-7d9f8c6b54-xk2mq`).
-5. **Vocabulary** separates an identifier from a key. `HTTPCode_ELB_5XX_Count`,
+7. **Vocabulary** separates an identifier from a key. `HTTPCode_ELB_5XX_Count`,
    `AWS-RunPatchBaseline`, `AWSLambda_FullAccess` and `VPC/subnets/NAT/IGW/route`
    all clear 0.85, and all split on `-_/.` and CamelCase into words, acronyms
    and small numbers. Key material does not. This is the clause entropy cannot
    supply: at 20–30 characters a structured identifier and a random key carry
    almost the same bits per character, but they are drawn from different
    vocabularies.
-6. **Base64 is decoded before judging.** Encoded prose carries full entropy per
+8. **Base64 is decoded before judging.** Encoded prose carries full entropy per
    character and none once decoded, which is the only honest way to tell
    `VGhpcyBpcyBq…` from a 32-byte key. The decoded text goes through the detector
    once, so base64 **of** a secret is still caught.
@@ -107,18 +121,26 @@ every commit id would make the plugin unusable. Set `strictHex` to catch them.
 
 ## Measured
 
-`node --experimental-strip-types bench/corpus.ts` — 26 labelled secrets, 63
+`node --experimental-strip-types bench/corpus.ts` — 26 labelled secrets, 64
 labelled clean samples drawn from ordinary infrastructure session traffic (git
 log, terraform plan, ARNs, k8s names, npm integrity, AWS CLI JSON, paths, URLs,
 and prose that merely mentions keys and tokens).
 
 ```
 secrets caught     26/26
-clean passed       63/63
+clean passed       64/64
 ```
 
 That is the corpus in `bench/corpus.ts`, not a claim about the field. Add your
 own false positives and false negatives there; it exits non-zero on any miss.
+
+Measured against the same 2293-file vault, with the detector as it stands:
+
+| | floor 20, entropy only | conjunction | + public declarations |
+|---|---|---|---|
+| all findings | 1750 | 180 | 27 |
+| `entropy` + `hex` | 1586 | 118 | 12 |
+| labelled recall | 26/26 | 26/26 | 26/26 |
 
 **A clean corpus is not a clean field, and this one proved it.** The corpus
 scored 49/49 while the same detector produced 1750 findings over 2293 markdown
@@ -270,6 +292,8 @@ folder run `/plugin-types .claude/types` once, then `tsc -p .` typechecks.
 | `proximityWindow` | 60 | Characters from a cue word that still count as announced; 0 disables |
 | `proximityRatio` | 0.70 | The entropy bar inside that window |
 | `announcedMinLength` | 16 | The length floor inside that window, or beside an assignment |
+| `flagAwsKeyIds` | false | Flag a lone `AKIA` with no secret beside it |
+| `pairWindow` | 240 | How far from an access key ID its secret half may sit |
 | `ledger` | true | Record the shape of every candidate let past |
 | `ledgerMinRatio` | 0.60 | Below this ratio a candidate is not worth recording |
 | `ledgerMaxRows` | 5000 | Rows kept before pruning |

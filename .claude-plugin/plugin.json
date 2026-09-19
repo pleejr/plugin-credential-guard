@@ -38,6 +38,18 @@
       "default": false,
       "title": "Flag git SHAs and sha256 sums"
     },
+    "flagAwsKeyIds": {
+      "type": "boolean",
+      "title": "Flag a lone AWS access key ID",
+      "description": "An AKIA is the published half of the pair and appears in every IAM listing and audit note. Off by default: it is flagged only when a 40-character secret-shaped run sits within pairWindow characters.",
+      "default": false
+    },
+    "pairWindow": {
+      "type": "number",
+      "title": "Key-pair proximity window",
+      "description": "How far from an access key ID its secret half may sit and still make the pair a finding.",
+      "default": 240
+    },
     "onToolResult": {
       "type": "string",
       "description": "What to do with findings in a tool's output.",

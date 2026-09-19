@@ -50,6 +50,38 @@ const ASSIGNED = /\b([A-Za-z0-9_]*(?:SECRET|PASSWORD|PASSWD|PRIVATE_KEY|API_?KEY
  */
 const CUE = /\b(?:api[\s_-]?keys?|access[\s_-]?keys?|secret[\s_-]?keys?|signing[\s_-]?keys?|private[\s_-]?keys?|auth[\s_-]?tokens?|access[\s_-]?tokens?|tokens?|secrets?|passwords?|passwd|passphrases?|credentials?|creds?|bearer|api[\s_-]?secrets?)\b/gi
 
+/**
+ * Text immediately to the LEFT of a candidate that declares what follows to be
+ * public. The mirror of CUE: "here's my api key" lowers the bar, and
+ * `fingerprint SHA256:` raises it out of reach. These prefixes are not part of
+ * the candidate -- the token regex stops at `:` and at whitespace -- so the
+ * declaration can only be seen by looking behind.
+ */
+const PUBLIC_LEAD = new RegExp(
+  [
+    // `fingerprint SHA256:<43 chars>` -- the hash name is not part of the token.
+    String.raw`(?:SHA256|SHA512|SHA1|MD5)\s*[:=]\s*$`,
+    // A word that names an identifier, then up to eight characters of quoting.
+    // `(?:\b|_)` so `AUTH0_CLIENT_ID` matches: `_CLIENT` carries no word boundary.
+    String.raw`(?:\b|_)(?:` +
+      [
+        'fingerprints?', 'thumbprint', 'serials?', 'serial[\\s_-]?numbers?',
+        'clients?', 'client[\\s_-]?id', 'key[\\s_-]?id', 'public[\\s_-]?key', 'pubkey',
+        'site[\\s_-]?key', 'sitekey', 'issuer', 'subject', 'checksums?', 'digest',
+        'commit', 'sha', 'etag', 'accounts?', 'tenants?', 'wallet', 'address',
+        'request[\\s_-]?id', 'trace[\\s_-]?id', 'correlation[\\s_-]?id',
+      ].join('|') +
+      String.raw`)\b["'\`\s:=(,-]{0,8}$`,
+    // The path of an ordinary URL. A query string is excluded on purpose --
+    // `?token=<value>` is exactly the leak this plugin exists to catch.
+    String.raw`https?://[A-Za-z0-9.-]+(?:/[A-Za-z0-9._~-]*)*/$`,
+  ].join('|'),
+  'i',
+)
+
+/** How far back a public declaration is still binding. */
+const PUBLIC_LEAD_WINDOW = 48
+
 /** Identifiers that look random and are not secrets. */
 const KNOWN_PUBLIC: readonly (readonly [string, RegExp])[] = [
   ['uuid', /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/],
@@ -57,6 +89,16 @@ const KNOWN_PUBLIC: readonly (readonly [string, RegExp])[] = [
   // Terraform Cloud ids are random and published in every run URL and webhook.
   ['tfc-id', /^(?:run|ws|pol|ot|at|org|user|team|apply|plan|sv|cv|ing)-[A-Za-z0-9]{16}$/],
   ['tfc-trigger-id', /^trig_[A-Za-z0-9]{20,}$/],
+  // Vercel project and team ids appear in every deployment URL.
+  ['vercel-id', /^(?:prj|team)_[A-Za-z0-9]{16,}$/],
+  // A Cloudflare Turnstile SITE key is the half meant to be in the page.
+  ['turnstile-site-key', /^0x4AAAAAAA[A-Za-z0-9_-]{8,}$/],
+  // RDS and DocumentDB cluster resource ids, which name a Secrets Manager path.
+  ['aws-cluster-resource-id', /^cluster-[A-Z0-9]{20,}$/],
+  // A Jenkins plugin version: `1511.v2e3cb_0008e`.
+  ['jenkins-version', /^[0-9]+(?:\.[0-9]+)*\.v[0-9a-f_]+$/],
+  // A Tailscale key id -- the public half; the secret follows it in the string.
+  ['tailscale-key-id', /^k[A-Za-z0-9]{10,12}CNTRL$/],
   ['git-ref', /^(?:refs\/|origin\/|heads\/)/],
   ['content-hash-uri', /^(?:sha256|sha512|md5|sha1)[-:]/i],
 ]
@@ -79,6 +121,15 @@ export type ScanOptions = {
   exemptRatio: number
   /** The length floor for a candidate a cue word or an assignment announced. */
   announcedMinLength: number
+  /**
+   * Flag a bare AWS access key ID with no secret beside it. An AKIA is the
+   * public half of the pair -- it appears in IAM listings, CloudTrail and every
+   * audit note -- so by default it is flagged only when a 40-character
+   * secret-shaped run sits within `pairWindow` characters of it.
+   */
+  flagAwsKeyIds: boolean
+  /** How far from an access key ID its secret half may sit. */
+  pairWindow: number
   /** The lowest ratio worth recording as a near miss; below this, nothing. */
   ledgerMinRatio: number
   maxScanChars: number
@@ -100,6 +151,8 @@ export const DEFAULTS: ScanOptions = {
   proximityRatio: 0.7,
   exemptRatio: 0.85,
   announcedMinLength: 16,
+  flagAwsKeyIds: false,
+  pairWindow: 240,
   ledgerMinRatio: 0.6,
   maxScanChars: 2_000_000,
   allow: new Set<string>(),
@@ -262,7 +315,9 @@ function looksLikePath(t: string, o: ScanOptions): boolean {
 
 /** 40- or 64-character lowercase hex: a git sha or a sha256 sum. */
 function isShaLike(s: string): boolean {
-  return /^[0-9a-f]+$/.test(s) && (s.length === 40 || s.length === 64)
+  // Case-insensitive: a certificate serial and an OpenSSL digest print in
+  // uppercase, and flagging those was most of what the hex rule still caught.
+  return /^[0-9a-fA-F]+$/.test(s) && (s.length === 40 || s.length === 64)
 }
 
 /** A path segment that is a name, a known identifier, or too short to be a key. */
@@ -299,6 +354,9 @@ function looksLikeWords(v: string): boolean {
 /** A word, an acronym, or a small number -- the parts identifiers are built from. */
 function isWordy(s: string): boolean {
   if (/^[0-9]+$/.test(s)) return true
+  // `wwx`, `rds`, `qa2`: a resource name is built from abbreviations as well as
+  // words, and key material does not arrive in four-character hyphen-split runs.
+  if (/^[a-z]{1,4}[0-9]{0,2}$/.test(s)) return true
   if (/^[A-Z][A-Z0-9]{1,5}$/.test(s)) return true
   return /^[A-Za-z]{2,}$/.test(s) && /[aeiouAEIOU]/.test(s)
 }
@@ -323,7 +381,9 @@ function looksLikeIdentifier(t: string, o: ScanOptions): boolean {
   return t
     .split(/[-_/.]/)
     .filter((s) => s.length > 0)
-    .every((s) => segmentIsBenign(s, o))
+    // A long CamelCase word (`DBInstanceClassMemory`) clears the entropy bar on
+    // its own, so judge a segment by its words before judging it by its bits.
+    .every((s) => camelWords(s).every(isWordy) || segmentIsBenign(s, o))
 }
 
 /**
@@ -341,6 +401,7 @@ function looksLikeName(t: string): boolean {
 /** Why a candidate was let past, for the ledger. */
 export type RejectReason =
   | 'known-public'
+  | 'declared-public'
   | 'path'
   | 'identifier'
   | 'words'
@@ -375,6 +436,21 @@ export type NearMiss = {
   cueDistance: number
   /** Which filter let it past. */
   reason: RejectReason
+}
+
+/**
+ * Is a 40-character secret-shaped run sitting near this match? That is the AWS
+ * secret access key's shape, and its presence is what turns a published key ID
+ * into a leaked pair.
+ */
+function hasSecretNeighbour(body: string, start: number, length: number, o: ScanOptions): boolean {
+  const from = Math.max(0, start - o.pairWindow)
+  const to = Math.min(body.length, start + length + o.pairWindow)
+  const around = body.slice(from, start) + ' ' + body.slice(start + length, to)
+  for (const m of around.matchAll(/[A-Za-z0-9+/]{40}/g)) {
+    if (entropyRatioOf(m[0]) >= o.entropyRatio) return true
+  }
+  return false
 }
 
 /** The entropy rule, applied to one candidate run. */
@@ -458,6 +534,10 @@ export function scanAll(
       const start = m.index
       const fp = fingerprint(value)
       if (o.allow.has(fp)) continue
+      // An access key ID on its own is an identifier, not a credential. It
+      // becomes one when its secret half is beside it, so look for a
+      // 40-character secret-shaped run in the surrounding text.
+      if (rule === 'aws-access-key' && !o.flagAwsKeyIds && !hasSecretNeighbour(body, start, value.length, o)) continue
       push(out, seen, {
         start,
         end: start + value.length,
@@ -516,6 +596,31 @@ export function scanAll(
     const end = start + value.length
     if (overlaps(out, start, end)) continue
     const distance = cueDistance(cues, start, end, Math.max(o.proximityWindow, 200))
+
+    // What sits immediately before the candidate can declare it public, the
+    // way a cue word declares it secret. `fingerprint SHA256:<43 chars>` is an
+    // ssh public key fingerprint and `serial = <40 hex>` a certificate serial;
+    // both clear 0.85 and neither is a credential.
+    const lead = body.slice(Math.max(0, start - PUBLIC_LEAD_WINDOW), start)
+    if (PUBLIC_LEAD.test(lead)) {
+      if (depth === 0 && value.length >= o.minLength) {
+        const ratio = entropyRatioOf(value)
+        if (ratio >= o.ledgerMinRatio) {
+          near.push({
+            fingerprint: fingerprint(value),
+            length: value.length,
+            alphabet: alphabetOf(value),
+            entropy: entropyOf(value),
+            ratio,
+            classes: classesOf(value),
+            vowelRatio: vowelRatio(value),
+            cueDistance: distance,
+            reason: 'declared-public',
+          })
+        }
+      }
+      continue
+    }
 
     let j = judge(value, o, depth)
     if (j.ok === undefined && distance >= 0 && distance <= o.proximityWindow) {

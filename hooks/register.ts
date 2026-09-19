@@ -245,6 +245,8 @@ export const register: Register = (on, options) => {
     proximityRatio: num(options.proximityRatio, 0.7),
     exemptRatio: num(options.exemptRatio, 0.85),
     announcedMinLength: num(options.announcedMinLength, 16),
+    flagAwsKeyIds: bool(options.flagAwsKeyIds, false),
+    pairWindow: num(options.pairWindow, 240),
     ledgerMinRatio: num(options.ledgerMinRatio, 0.6),
     maxScanChars: num(options.maxScanChars, 2_000_000),
     allow: new Set(fingerprints(options.allow)),

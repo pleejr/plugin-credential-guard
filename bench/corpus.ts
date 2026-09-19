@@ -13,7 +13,7 @@ import { scan, entropyRatioOf } from '../hooks/scan.ts'
  * Slack or Stripe credential and blocks the push over.
  */
 const SECRETS: readonly (readonly [string, string])[] = [
-  ['aws access key id', 'AKIAIOSFODNN7EXAMPLE'],
+  ['aws access key id beside its secret', 'AKIA' + 'IOSFODNN7EXAMPLE' + ' / ' + 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
   ['aws secret access key', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
   ['aws session token', 'FwoGZXIvYXdzEBYaDHRlc3RzZXNzaW9uSyLnAVRlc3RUb2tlblZhbHVlSGVyZQ'],
   ['github classic pat', 'ghp_' + '16C7e42F292c6912E7710c838347Ae178B4a'],
@@ -84,6 +84,10 @@ const CLEAN: readonly (readonly [string, string])[] = [
   ['npm integrity', '"integrity": "sha512-dxsgKSAJCCJI7KhVYoEeIjZ4A1xt5bkLVLJ7oqW1kPrK5jQm4vJRCg=="'],
   ['terraform plan diff', '  ~ tags = { "Name" = "svc-example-prod-asg" "ManagedBy" = "terraform" }'],
   ['git log block', 'commit a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4\nAuthor: someone <someone@example.com>\nDate: Thu Sep 18 11:20:34 2026 -0400'],
+  // An access key ID with no secret beside it is the published half of the
+  // pair: it appears in every IAM listing and audit note. See the paired
+  // sample in SECRETS, which is what a leak actually looks like.
+  ['bare aws access key id', 'AKIAIOSFODNN7EXAMPLE'],
   // Measured false positives from a 2293-file markdown vault, 2026-09-18.
   ['cloudwatch metric name', 'the alarm watches HTTPCode_ELB_5XX_Count on prod-alb over five minutes'],
   ['prefixed metric name', 'prod-alb-HTTPCode_ELB_500_Count breached at 11:20'],
