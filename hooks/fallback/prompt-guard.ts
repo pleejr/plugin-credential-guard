@@ -39,12 +39,12 @@ const main = async (): Promise<void> => {
   try {
     const payload = JSON.parse(raw) as { prompt?: unknown }
     if (typeof payload.prompt !== 'string') {
-      process.stdout.write('entropy-guard fallback: the hook payload carried no prompt — it was NOT scanned.\n')
+      process.stdout.write('credential-guard fallback: the hook payload carried no prompt — it was NOT scanned.\n')
       return
     }
     prompt = payload.prompt
   } catch {
-    process.stdout.write('entropy-guard fallback: the hook payload did not parse — the prompt was NOT scanned.\n')
+    process.stdout.write('credential-guard fallback: the hook payload did not parse — the prompt was NOT scanned.\n')
     return
   }
 
@@ -55,13 +55,13 @@ const main = async (): Promise<void> => {
     findings = redactText(prompt).findings
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    process.stdout.write(`entropy-guard fallback: the detector threw (${msg}) — the prompt was NOT scanned.\n`)
+    process.stdout.write(`credential-guard fallback: the detector threw (${msg}) — the prompt was NOT scanned.\n`)
     return
   }
   if (findings.length === 0) return
 
   process.stderr.write(
-    `entropy-guard: the prompt carries ${findings.length} high-entropy value(s) ` +
+    `credential-guard: the prompt carries ${findings.length} high-entropy value(s) ` +
       `(${describe(findings)}) and was not sent.\n` +
       `The plugin's own hook is not seated in this session, and a command hook cannot redact in place, ` +
       `so the prompt is held back whole. Remove the value, or reference it from the environment.\n`,

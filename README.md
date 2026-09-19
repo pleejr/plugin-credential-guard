@@ -1,9 +1,15 @@
-# entropy-guard
+# credential-guard
 
-A Claude Code plugin of function hooks that keeps high-entropy values out of the
-session transcript **while keeping them usable inside it**. It measures Shannon
-entropy, redacts what it finds, vaults the value, and offers to keep it in the
-macOS login Keychain so later sessions can use it too.
+A Claude Code plugin of function hooks that keeps credentials out of the session
+transcript **while keeping them usable inside it**. It decides what a credential
+is from several requirements together — a named provider pattern, length,
+normalized Shannon entropy, what the surrounding text declares the value to be,
+and whether it is spelled out of words — then redacts it behind a placeholder,
+vaults the value, and offers the macOS login Keychain so later sessions can use
+it too.
+
+It was called `entropy-guard` while entropy was the whole decision. It is not:
+entropy is one clause of the test, and the weakest one.
 
 ## The cycle
 
@@ -157,7 +163,7 @@ On the first sighting of a value, the plugin asks — outside the turn, so it
 never blocks a tool — whether to keep it:
 
 ```
-entropy-guard caught a github-token (#ef5029cc) and kept it out of the
+credential-guard caught a github-token (#ef5029cc) and kept it out of the
 transcript. Save it to your macOS login Keychain so later sessions can use it?
   [ Save to Keychain ]  [ Not this one ]  [ Stop asking this session ]
 ```
@@ -166,9 +172,9 @@ Say yes and it asks for a name, then writes one generic-password item:
 
 | field | value |
 |---|---|
-| service (`-s`) | `claude-code-entropy-guard` |
+| service (`-s`) | `claude-code-credential-guard` |
 | account (`-a`) | the fingerprint, e.g. `ef5029cc` |
-| label (`-l`) | `entropy-guard: AWS_PROD` |
+| label (`-l`) | `credential-guard: AWS_PROD` |
 | password | the secret, fed on **stdin**, never as an argument |
 
 Feeding it on stdin matters: `security add-generic-password -w <value>` would
@@ -178,8 +184,8 @@ put the secret in the process table where any `ps` could read it.
 **Values live only in the Keychain.** Inspect or revoke with:
 
 ```
-security find-generic-password -s claude-code-entropy-guard -a <fingerprint> -w
-security delete-generic-password -s claude-code-entropy-guard -a <fingerprint>
+security find-generic-password -s claude-code-credential-guard -a <fingerprint> -w
+security delete-generic-password -s claude-code-credential-guard -a <fingerprint>
 ```
 
 Set `keychain` to `auto` to save without being asked, or `off` to never ask.
@@ -206,11 +212,11 @@ learn least from — seen once, and oldest. The whole plugin store is capped at
 Read it with the slash command the plugin registers:
 
 ```
-/entropy-guard
+/credential-guard
 ```
 
 ```
-entropy-guard — calibration
+credential-guard — calibration
 
 9 distinct shapes, 27 sightings, current cut 0.85.
 Every row is something the detector SAW and LET PAST. Values are not kept.
@@ -247,15 +253,15 @@ real string, which only exists in memory during the session that saw it.
 From the marketplace this repo publishes:
 
 ```
-/plugin marketplace add pleejr/plugin-entropy-guard
-/plugin install entropy-guard@pleejr
+/plugin marketplace add pleejr/plugin-credential-guard
+/plugin install credential-guard@pleejr
 ```
 
-Or from a checkout, permanently as `entropy-guard@skills-dir`:
+Or from a checkout, permanently as `credential-guard@skills-dir`:
 
 ```
-ln -sfn "$PWD" ~/.claude/skills/entropy-guard   # run from the checkout
-claude plugin list          # entropy-guard@skills-dir — Status: loaded
+ln -sfn "$PWD" ~/.claude/skills/credential-guard   # run from the checkout
+claude plugin list          # credential-guard@skills-dir — Status: loaded
 ```
 
 Or load it for one session only:
@@ -312,7 +318,7 @@ When the flag resolves off — a cold GrowthBook cache does it on its own, with 
 error — the engine logs
 
 ```
-hooks module entropy-guard@skills-dir not loaded: the rollout flag (tengu_plugin_hooks_modules) is off
+hooks module credential-guard@skills-dir not loaded: the rollout flag (tengu_plugin_hooks_modules) is off
 Registered 0 hooks from 9 plugins
 ```
 
@@ -346,7 +352,7 @@ key, and the command-hook fallback stood down as designed.
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/skills/entropy-guard/hooks/fallback/prompt-guard.sh",
+            "command": "$HOME/.claude/skills/credential-guard/hooks/fallback/prompt-guard.sh",
             "timeout": 10,
             "statusMessage": "entropy guard"
           }

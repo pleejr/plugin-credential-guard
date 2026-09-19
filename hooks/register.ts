@@ -1,5 +1,5 @@
 /**
- * entropy-guard: keeps high-entropy values out of the session transcript while
+ * credential-guard: keeps high-entropy values out of the session transcript while
  * keeping them usable inside it.
  *
  * The cycle, once round:
@@ -109,7 +109,7 @@ async function flushLedger($: EngineInterface): Promise<void> {
   if (!ledgerDirty || ledger === null) return
   ledgerDirty = false
   const dropped = prune(ledger, ledgerMaxRows)
-  if (dropped > 0) $.ui.log(`entropy-guard: pruned ${dropped} ledger row(s) to stay under ${ledgerMaxRows}`, { to: 'debug' })
+  if (dropped > 0) $.ui.log(`credential-guard: pruned ${dropped} ledger row(s) to stay under ${ledgerMaxRows}`, { to: 'debug' })
   await $.store.set(LEDGER_KEY, ledger)
 }
 
@@ -124,13 +124,13 @@ async function noteNear($: EngineInterface, near: readonly NearMiss[], tool: str
 async function save($: EngineInterface, fp: string, label: string, rule: string, value: string): Promise<boolean> {
   const r = await keychainSave(runner($), fp, label, rule, value)
   if (!r.ok) {
-    $.ui.log(`entropy-guard: the Keychain refused #${fp} — ${r.error}`)
+    $.ui.log(`credential-guard: the Keychain refused #${fp} — ${r.error}`)
     return false
   }
   const idx = await loadIndex($)
   idx[fp] = { label, rule, savedAt: Date.now() }
   await $.store.set(INDEX_KEY, idx)
-  $.ui.log(`entropy-guard: saved #${fp} to your login Keychain as [secret:${label}]`)
+  $.ui.log(`credential-guard: saved #${fp} to your login Keychain as [secret:${label}]`)
   return true
 }
 
@@ -155,7 +155,7 @@ async function drain($: EngineInterface): Promise<void> {
       let answer: string
       try {
         answer = await $.ui.ask(
-          `entropy-guard caught a ${item.rule} (#${fp}) and kept it out of the transcript. ` +
+          `credential-guard caught a ${item.rule} (#${fp}) and kept it out of the transcript. ` +
             `Save it to your macOS login Keychain so later sessions can use it?`,
           { header: 'Secret', options: ['Save to Keychain', 'Not this one', 'Stop asking this session'] },
         )
@@ -268,13 +268,13 @@ export const register: Register = (on, options) => {
     if (ledgerOn) {
       await loadLedger($)
       await $.command.register({
-        name: 'entropy-guard',
+        name: 'credential-guard',
         description: 'Calibration report: what the detector saw and let past.',
       })
       $.clock.every(30_000, () => void flushLedger($))
     }
     $.ui.log(
-      `entropy-guard: output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, ` +
+      `credential-guard: output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, ` +
         `keychain ${keychain}, rehydrate ${rehydrateOn}; ${held} secret(s) held.`,
       { to: 'debug' },
     )
@@ -286,11 +286,11 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     const text = indexBlock(await loadIndex($))
     if (text === undefined) return r
-    return { ...r, blocks: [...r.blocks, { name: 'entropyGuardSecrets', text }] }
+    return { ...r, blocks: [...r.blocks, { name: 'credentialGuardSecrets', text }] }
   })
 
-  on('command.run', { command: 'entropy-guard' }, async ($, e, next) => {
-    if (!ledgerOn) return { text: 'entropy-guard: the ledger is off (`ledger` option).' }
+  on('command.run', { command: 'credential-guard' }, async ($, e, next) => {
+    if (!ledgerOn) return { text: 'credential-guard: the ledger is off (`ledger` option).' }
     return { text: calibrate(await loadLedger($), num(options.entropyRatio, 0.85)) }
   })
 
@@ -308,17 +308,17 @@ export const register: Register = (on, options) => {
       if (findings.length > 0) {
         if (onToolInput === 'deny') {
           count += findings.length
-          $.ui.status(`entropy-guard: ${count} caught`)
-          $.ui.log(`entropy-guard: refused ${e.tool} — its arguments carry ${describe(findings)}`)
+          $.ui.status(`credential-guard: ${count} caught`)
+          $.ui.log(`credential-guard: refused ${e.tool} — its arguments carry ${describe(findings)}`)
           await capture($, findings)
           return {
             deny:
-              `entropy-guard refused this call: its arguments carry ${findings.length} high-entropy ` +
+              `credential-guard refused this call: its arguments carry ${findings.length} high-entropy ` +
               `value(s) (${describe(findings)}). Reference the secret by its placeholder, or read it ` +
               `from the environment inside the command, instead of writing it into the call.`,
           }
         }
-        $.ui.log(`entropy-guard: ${e.tool} arguments carry ${describe(findings)} (recorded, not blocked)`)
+        $.ui.log(`credential-guard: ${e.tool} arguments carry ${describe(findings)} (recorded, not blocked)`)
         await capture($, findings)
       }
     }
@@ -330,11 +330,11 @@ export const register: Register = (on, options) => {
         const swapped = rehydrateValue(e, (id) => values.get(id))
         if (swapped.used.length > 0) {
           down = swapped.value as typeof e
-          $.ui.log(`entropy-guard: substituted ${swapped.used.length} held secret(s) into ${e.tool}`)
+          $.ui.log(`credential-guard: substituted ${swapped.used.length} held secret(s) into ${e.tool}`)
         }
       }
     } else if (rehydrateOn && EGRESS.test(e.tool) && referencesIn(raw).fingerprints.length + referencesIn(raw).labels.length > 0) {
-      $.ui.log(`entropy-guard: left placeholders alone in ${e.tool} — it sends arguments off this machine`)
+      $.ui.log(`credential-guard: left placeholders alone in ${e.tool} — it sends arguments off this machine`)
     }
 
     const r = await next(down)
@@ -349,8 +349,8 @@ export const register: Register = (on, options) => {
     if (findings.length === 0) return r
 
     count += findings.length
-    $.ui.status(`entropy-guard: ${count} caught`)
-    $.ui.log(`entropy-guard: redacted ${findings.length} value(s) from ${e.tool} — ${describe(findings)}`)
+    $.ui.status(`credential-guard: ${count} caught`)
+    $.ui.log(`credential-guard: redacted ${findings.length} value(s) from ${e.tool} — ${describe(findings)}`)
     await capture($, findings)
 
     // `ref` is dropped on purpose: keeping it makes core record its own
@@ -361,7 +361,7 @@ export const register: Register = (on, options) => {
     return { result: body.value as typeof r.result, context: ctx.list }
   }).catch(($, e, next) => {
     $.ui.log(
-      `entropy-guard: the guard failed on ${e.tool} (${next.error.kind}: ${next.error.message ?? 'no message'}) — ` +
+      `credential-guard: the guard failed on ${e.tool} (${next.error.kind}: ${next.error.message ?? 'no message'}) — ` +
         `this call's output was NOT scanned`,
     )
     return undefined
@@ -377,18 +377,18 @@ export const register: Register = (on, options) => {
     if (findings.length === 0) return next(e)
 
     count += findings.length
-    $.ui.status(`entropy-guard: ${count} caught`)
+    $.ui.status(`credential-guard: ${count} caught`)
     await capture($, findings)
     if (onPrompt === 'block') {
-      $.ui.log(`entropy-guard: held back your prompt — it carries ${describe(findings)}`)
+      $.ui.log(`credential-guard: held back your prompt — it carries ${describe(findings)}`)
       return {
-        drop: `entropy-guard: the prompt carries ${findings.length} high-entropy value(s) (${describe(findings)}) and was not sent.`,
+        drop: `credential-guard: the prompt carries ${findings.length} high-entropy value(s) (${describe(findings)}) and was not sent.`,
       }
     }
-    $.ui.log(`entropy-guard: redacted ${findings.length} value(s) from your prompt — ${describe(findings)}`)
+    $.ui.log(`credential-guard: redacted ${findings.length} value(s) from your prompt — ${describe(findings)}`)
     return next({ ...e, text: prompt.text, context: ctx.list })
   }).catch(($, e, next) => {
-    $.ui.log(`entropy-guard: the guard failed on your prompt (${next.error.kind}) — it was NOT scanned`)
+    $.ui.log(`credential-guard: the guard failed on your prompt (${next.error.kind}) — it was NOT scanned`)
     return undefined
   })
 
@@ -400,17 +400,17 @@ export const register: Register = (on, options) => {
     if (body.findings.length === 0) return next(e)
 
     count += body.findings.length
-    $.ui.status(`entropy-guard: ${count} caught`)
+    $.ui.status(`credential-guard: ${count} caught`)
     await capture($, body.findings)
     $.ui.log(
-      `entropy-guard: redacted ${body.findings.length} value(s) from a ${e.origin.kind} delivery — ${describe(body.findings)}`,
+      `credential-guard: redacted ${body.findings.length} value(s) from a ${e.origin.kind} delivery — ${describe(body.findings)}`,
     )
     if (onPrompt === 'block') {
-      return { consumed: `entropy-guard: the delivery carried ${body.findings.length} high-entropy value(s) and was not queued.` }
+      return { consumed: `credential-guard: the delivery carried ${body.findings.length} high-entropy value(s) and was not queued.` }
     }
     return next({ ...e, text: body.text })
   }).catch(($, e, next) => {
-    $.ui.log(`entropy-guard: the guard failed on a ${e.origin.kind} delivery (${next.error.kind}) — it was NOT scanned`)
+    $.ui.log(`credential-guard: the guard failed on a ${e.origin.kind} delivery (${next.error.kind}) — it was NOT scanned`)
     return undefined
   })
 }
