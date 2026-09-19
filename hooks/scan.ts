@@ -135,6 +135,14 @@ export type ScanOptions = {
   pairWindow: number
   /** The lowest ratio worth recording as a near miss; below this, nothing. */
   ledgerMinRatio: number
+  /**
+   * Run the shape-only rules -- `entropy`, `hex` and their `-cue` variants.
+   * Off leaves the named patterns and the announced-assignment rule, which
+   * judge a value by what the surrounding text CALLS it rather than by how the
+   * run itself looks. Shape is the clause that carries the false positives, so
+   * a surface where a person never types a secret can be scanned without it.
+   */
+  shapeRules: boolean
   maxScanChars: number
   allow: ReadonlySet<string>
 }
@@ -157,6 +165,7 @@ export const DEFAULTS: ScanOptions = {
   flagAwsKeyIds: false,
   pairWindow: 240,
   ledgerMinRatio: 0.6,
+  shapeRules: true,
   maxScanChars: 2_000_000,
   allow: new Set<string>(),
 }
@@ -634,6 +643,14 @@ export function scanAll(
       ratio: entropyRatioOf(value),
       fingerprint: fp,
     })
+  }
+
+  // The shape-only rules end here. With them off, a value is a finding only
+  // where a named pattern matched it or the text announced it, and nothing is
+  // recorded as a near miss: a rule that did not run is not tunable.
+  if (!o.shapeRules) {
+    out.sort((a, b) => a.start - b.start)
+    return { findings: out, near }
   }
 
   const cues = o.proximityWindow > 0 ? cuePositions(body) : []
