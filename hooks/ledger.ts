@@ -12,7 +12,7 @@
  */
 import type { NearMiss, RejectReason } from './scan.ts'
 
-export const LEDGER_KEY = 'entropy-guard:ledger'
+export const LEDGER_KEY = 'credential-guard:ledger'
 export const LEDGER_VERSION = 1
 
 export type LedgerRow = NearMiss & {
@@ -100,7 +100,7 @@ export function calibrate(ledger: Ledger, currentCut: number): string {
   const rows = Object.values(ledger.rows)
   if (rows.length === 0) {
     return [
-      'entropy-guard — calibration',
+      'credential-guard — calibration',
       '',
       'The ledger is empty. Nothing has been seen and let past yet, so there is',
       'nothing to tune on. It fills as tools return output; come back later.',
@@ -126,7 +126,7 @@ export function calibrate(ledger: Ledger, currentCut: number): string {
 
   const onRatio = rows.filter((r) => r.reason === 'ratio')
   const lines: string[] = [
-    'entropy-guard — calibration',
+    'credential-guard — calibration',
     '',
     `${rows.length} distinct shapes, ${observations} sightings, current cut ${currentCut}.`,
     'Every row is something the detector SAW and LET PAST. Values are not kept.',

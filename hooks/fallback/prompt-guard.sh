@@ -16,7 +16,7 @@ if [ -z "$NODE" ] && [ -s "$HOME/.nvm/nvm.sh" ]; then
   NODE=$(command -v node 2>/dev/null || true)
 fi
 if [ -z "$NODE" ]; then
-  echo "entropy-guard fallback: no node on PATH — the prompt was NOT scanned."
+  echo "credential-guard fallback: no node on PATH — the prompt was NOT scanned."
   exit 0
 fi
 

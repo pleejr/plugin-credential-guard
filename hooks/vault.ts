@@ -14,8 +14,8 @@
  * rather than as an argument, so the value never appears in the process table.
  */
 
-export const SERVICE = 'claude-code-entropy-guard'
-export const INDEX_KEY = 'entropy-guard:index'
+export const SERVICE = 'claude-code-credential-guard'
+export const INDEX_KEY = 'credential-guard:index'
 
 /** `$.process.run`, narrowed to what this module needs, so it can be faked. */
 export type Run = (
@@ -125,9 +125,9 @@ export async function keychainSave(
       '-U',
       '-a', fingerprint,
       '-s', SERVICE,
-      '-l', `entropy-guard: ${label}`,
-      '-D', 'entropy-guard secret',
-      '-j', `${rule}; saved by the entropy-guard Claude Code plugin`,
+      '-l', `credential-guard: ${label}`,
+      '-D', 'credential-guard secret',
+      '-j', `${rule}; saved by the credential-guard Claude Code plugin`,
       '-w',
     ],
     { stdin: `${value}\n${value}\n`, timeoutMs: 30_000 },
@@ -161,7 +161,7 @@ export function indexBlock(index: VaultIndex): string | undefined {
     .sort((a, b) => a[1].label.localeCompare(b[1].label))
     .map(([, v]) => `- [secret:${v.label}] — ${v.rule}, saved ${new Date(v.savedAt).toISOString().slice(0, 10)}`)
   return [
-    'The entropy-guard plugin holds these secrets outside this conversation.',
+    'The credential-guard plugin holds these secrets outside this conversation.',
     'Their values are not in this transcript and will not be shown to you.',
     '',
     ...lines,

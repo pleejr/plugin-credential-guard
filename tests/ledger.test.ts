@@ -66,7 +66,7 @@ test('a tool result writes a ledger row through the engine', async ($, on) => {
 
   await $.tool.call({ tool: 'Bash', command: 'make id' })
   const out = await $.command.run({
-    command: 'entropy-guard',
+    command: 'credential-guard',
     args: '',
     origin: { kind: 'composer' },
     presentation: { isFullscreen: false, columns: 100 },
