@@ -180,7 +180,17 @@ async function noteNear($: EngineInterface, near: readonly NearMiss[], tool: str
 }
 
 async function save($: EngineInterface, fp: string, label: string, rule: string, value: string): Promise<boolean> {
-  const r = await keychainSave(runner($), fp, label, rule, value)
+  // `$.process.run` REJECTS where `security` merely fails: a timeout, a refused
+  // call, a noun this build does not hand a hooks module. keychainSave reports
+  // only the non-zero exit, so without this catch the rejection travelled up
+  // into `void drain($)` and died there -- no item, no line, nothing to read.
+  let r: { ok: true } | { ok: false; error: string }
+  try {
+    r = await keychainSave(runner($), fp, label, rule, value)
+  } catch (e) {
+    $.ui.log(`the Keychain write for #${fp} threw — ${String(e)}`)
+    return false
+  }
   if (!r.ok) {
     $.ui.log(`the Keychain refused #${fp} — ${r.error}`)
     return false
@@ -254,7 +264,13 @@ async function capture($: EngineInterface, findings: readonly Finding[]): Promis
     if (askingOff || offered.has(f.fingerprint) || idx[f.fingerprint] !== undefined) continue
     pending.set(f.fingerprint, { rule: f.rule, value: f.value })
   }
-  if (pending.size > 0) $.clock.after(50, () => void drain($))
+  // A timer callback discards what it returns, so drain's own failure needs a
+  // handler here or it is an unhandled rejection the person never sees.
+  if (pending.size > 0) {
+    $.clock.after(50, () => {
+      drain($).catch((e: unknown) => $.ui.log(`the Keychain offer failed — ${String(e)}`))
+    })
+  }
 }
 
 /** Every placeholder in `text`, resolved to a value where one is held. */
