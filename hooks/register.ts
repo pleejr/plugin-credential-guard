@@ -39,6 +39,7 @@ import {
   type Run,
   type VaultIndex,
 } from './vault.ts'
+import { parseTrust } from './trust.ts'
 
 type ResultAction = 'redact' | 'off'
 type InputAction = 'warn' | 'deny' | 'off'
@@ -65,6 +66,15 @@ const fingerprints = (v: unknown): string[] =>
 
 /** fingerprint -> value, for this session only. Never written to disk. */
 const vault = new Map<string, string>()
+/**
+ * Fingerprints the detector must not flag: the `allow` option, plus whatever a
+ * trusted corpus vouches for. One Set, held here rather than rebuilt, so the
+ * trust list can be merged into it after `scanOpts` is already in use.
+ */
+const allowSet = new Set<string>()
+/** Where a corpus that has passed its own sensitivity gate is recorded. */
+let trustFile = ''
+let trustLoaded = false
 /** What the Keychain holds, as `$.store` records it. Values are not here. */
 let index: VaultIndex | null = null
 /** Caught this session and not yet put to the person. */
@@ -90,6 +100,41 @@ let rehydrateEgress = false
 
 /** `$.process.run`, as the vault module takes it. */
 const runner = ($: EngineInterface): Run => (argv, init) => $.process.run(argv, init)
+
+/**
+ * Merges a trusted corpus's fingerprints into the allow set, once per session.
+ *
+ * The file is read rather than the corpus scanned: walking a 2300-file vault
+ * inside a hook's 10 s budget is not a thing to do on every session start, and
+ * the generator (`bin/trust-vault.ts`) already refused everything a shape-only
+ * rule did not find. It fails QUIET and EMPTY -- a missing or malformed trust
+ * list trusts nothing, which is the direction a suppression list must fail in.
+ */
+async function loadTrust($: EngineInterface): Promise<void> {
+  if (trustLoaded || trustFile === '') return
+  trustLoaded = true
+  const home = $.env.get('HOME') ?? ''
+  const path = trustFile.startsWith('~/') && home !== '' ? home + trustFile.slice(1) : trustFile
+  try {
+    if (!(await $.fs.exists(path))) {
+      $.ui.log(`credential-guard: no trust list at ${path} -- trusting nothing`, { to: 'debug' })
+      return
+    }
+    const parsed = parseTrust(JSON.parse(await $.fs.read(path)))
+    if (parsed.error !== undefined) {
+      $.ui.log(`credential-guard: the trust list at ${path} is unusable (${parsed.error}) -- trusting nothing`)
+      return
+    }
+    for (const fp of parsed.fingerprints) allowSet.add(fp)
+    $.ui.log(
+      `credential-guard: trusting ${parsed.fingerprints.size} fingerprint(s) vouched for on ${parsed.generatedAt}` +
+        `${parsed.refused > 0 ? `, ${parsed.refused} refused at generation` : ''}`,
+      { to: 'debug' },
+    )
+  } catch (e) {
+    $.ui.log(`credential-guard: could not read the trust list at ${path} (${String(e)}) -- trusting nothing`)
+  }
+}
 
 async function loadIndex($: EngineInterface): Promise<VaultIndex> {
   if (index !== null) return index
@@ -249,8 +294,12 @@ export const register: Register = (on, options) => {
     pairWindow: num(options.pairWindow, 240),
     ledgerMinRatio: num(options.ledgerMinRatio, 0.6),
     maxScanChars: num(options.maxScanChars, 2_000_000),
-    allow: new Set(fingerprints(options.allow)),
+    allow: allowSet,
   }
+  allowSet.clear()
+  for (const fp of fingerprints(options.allow)) allowSet.add(fp)
+  trustFile = typeof options.trustFile === 'string' ? options.trustFile : ''
+  trustLoaded = false
   onToolResult = pick<ResultAction>(options.onToolResult, ['redact', 'off'], 'redact')
   onToolInput = pick<InputAction>(options.onToolInput, ['warn', 'deny', 'off'], 'warn')
   onPrompt = pick<PromptAction>(options.onPrompt, ['redact', 'block', 'off'], 'redact')
@@ -263,6 +312,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     const r = await next(e)
+    await loadTrust($)
     const idx = await loadIndex($)
     const held = Object.keys(idx).length
     if (ledgerOn) {
