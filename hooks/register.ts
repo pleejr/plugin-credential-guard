@@ -13,10 +13,13 @@
  *   5. a saved secret is listed to the model next session as `[secret:NAME]`,
  *      so step 4 works in every session after this one
  *
+ * `promptOnly` collapses all of that to one door: only what the person typed
+ * and submitted is scanned, and the Keychain is never offered. See resolveDoors.
+ *
  * Failure mode is OPEN: a hook that throws or overruns its 10 s budget is
  * skipped and the content passes unredacted. Each `.catch` says so on screen.
  */
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { describe, redactText, redactValue, type Finding, type NearMiss, type ScanOptions } from './scan.ts'
 import {
   calibrate,
@@ -63,6 +66,49 @@ const pick = <T extends string>(v: unknown, allowed: readonly T[], fallback: T):
 const fingerprints = (v: unknown): string[] =>
   typeof v === 'string' ? v.split(/[\s,]+/).filter((x) => x.length > 0) : []
 
+/**
+ * Which doors this activation watches, after `promptOnly` has had its say.
+ * Kept as one pure function so the mode can be tested without the engine:
+ * the option is not mockable in a test, the resolution is.
+ */
+export type Doors = {
+  result: ResultAction
+  input: InputAction
+  prompt: PromptAction
+  /** Whether a peer session, relay or webhook delivery is scanned. */
+  delivery: boolean
+  keychain: KeychainMode
+}
+
+/**
+ * `promptOnly` is ONE switch over all four doors: scan nothing but what the
+ * person typed and submitted, and never raise a Keychain offer. It closes the
+ * tool doors and the delivery door rather than lowering a threshold, so under
+ * it the detector cannot flag a value the person did not type -- no tool
+ * output, no tool argument, no peer delivery, and so no save prompt for one.
+ *
+ * It overrides `onToolResult`, `onToolInput` and `keychain` outright, because
+ * a mode whose promise is "nothing but my prompts" cannot be half-held by an
+ * option set earlier. `onPrompt` is left alone: redact or block is still the
+ * person's choice, and `off` under `promptOnly` is the whole plugin off.
+ *
+ * It is not the default. It gives up every catch that happens in a tool's
+ * output, which is where a `cat .env` or an `aws sts` leak comes from.
+ */
+export function resolveDoors(options: PluginOptions): Doors {
+  const prompt = pick<PromptAction>(options.onPrompt, ['redact', 'block', 'off'], 'redact')
+  if (bool(options.promptOnly, false)) {
+    return { result: 'off', input: 'off', prompt, delivery: false, keychain: 'off' }
+  }
+  return {
+    result: pick<ResultAction>(options.onToolResult, ['redact', 'off'], 'redact'),
+    input: pick<InputAction>(options.onToolInput, ['warn', 'deny', 'off'], 'warn'),
+    prompt,
+    delivery: true,
+    keychain: pick<KeychainMode>(options.keychain, ['ask', 'auto', 'off'], 'ask'),
+  }
+}
+
 // --- module state ----------------------------------------------------------
 // The module is loaded once per session, so its scope is the session's scope.
 
@@ -107,6 +153,10 @@ let shapeScope: ShapeScope = 'prompt'
 let onToolResult: ResultAction = 'redact'
 let onToolInput: InputAction = 'warn'
 let onPrompt: PromptAction = 'redact'
+/** Whether a peer delivery is scanned at all. `promptOnly` closes this door. */
+let onDelivery = true
+/** Watch nothing but the person's own prompts, and never offer the Keychain. */
+let promptOnly = false
 let keychain: KeychainMode = 'ask'
 let rehydrateOn = true
 let rehydrateEgress = false
@@ -336,10 +386,13 @@ export const register: Register = (on, options) => {
   promptOpts = { ...scanOpts, shapeRules: shapeScope !== 'off' }
   resultOpts = { ...scanOpts, shapeRules: shapeScope === 'prompt+result' || shapeScope === 'all' }
   inputOpts = { ...scanOpts, shapeRules: shapeScope === 'all' }
-  onToolResult = pick<ResultAction>(options.onToolResult, ['redact', 'off'], 'redact')
-  onToolInput = pick<InputAction>(options.onToolInput, ['warn', 'deny', 'off'], 'warn')
-  onPrompt = pick<PromptAction>(options.onPrompt, ['redact', 'block', 'off'], 'redact')
-  keychain = pick<KeychainMode>(options.keychain, ['ask', 'auto', 'off'], 'ask')
+  promptOnly = bool(options.promptOnly, false)
+  const doors = resolveDoors(options)
+  onToolResult = doors.result
+  onToolInput = doors.input
+  onPrompt = doors.prompt
+  onDelivery = doors.delivery
+  keychain = doors.keychain
   rehydrateOn = bool(options.rehydrate, true)
   rehydrateEgress = bool(options.rehydrateEgress, false)
   ledgerOn = bool(options.ledger, true)
@@ -360,8 +413,10 @@ export const register: Register = (on, options) => {
       $.clock.every(30_000, () => void flushLedger($))
     }
     $.ui.log(
-      `output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, ` +
-        `shape rules on ${shapeScope}, keychain ${keychain}, rehydrate ${rehydrateOn}; ${held} secret(s) held.`,
+      `${promptOnly ? 'prompt-only: your prompts alone are scanned, the Keychain never asks; ' : ''}` +
+        `output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, deliveries ` +
+        `${onDelivery ? 'scanned' : 'off'}, shape rules on ${shapeScope}, keychain ${keychain}, ` +
+        `rehydrate ${rehydrateOn}; ${held} secret(s) held.`,
       { to: 'debug' },
     )
     return r
@@ -377,7 +432,10 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'credential-guard' }, async ($, e, next) => {
     if (!ledgerOn) return { text: 'credential-guard: the ledger is off (`ledger` option).' }
-    return { text: calibrate(await loadLedger($), num(options.entropyRatio, 0.85)) }
+    const report = calibrate(await loadLedger($), num(options.entropyRatio, 0.85))
+    // A report is only as good as the population behind it: under promptOnly
+    // nothing but prompts is ever scanned, so nothing but prompts is counted.
+    return { text: promptOnly ? `${report}\n\nPopulation: prompts only (promptOnly is on).` : report }
   })
 
   on('session.end', async ($, e, next) => {
@@ -480,7 +538,7 @@ export const register: Register = (on, options) => {
 
   // --- what a peer session, relay or webhook delivered ----------------------
   on('session.receive', async ($, e, next) => {
-    if (onPrompt === 'off') return next(e)
+    if (!onDelivery || onPrompt === 'off') return next(e)
     const body = redactText(e.text, promptOpts)
     await noteNear($, body.near, `delivery:${e.origin.kind}`)
     if (body.findings.length === 0) return next(e)
