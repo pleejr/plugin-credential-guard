@@ -11,7 +11,7 @@
     "promptOnly": {
       "type": "boolean",
       "title": "Watch only what I type",
-      "description": "One switch: scan nothing but the prompts you submit. Tool output, tool arguments and peer deliveries are not scanned at all, so no entropy is ever judged outside your own typing, and no Keychain offer is ever raised — you are not asked to save anything. It overrides onToolResult, onToolInput and keychain; onPrompt still chooses redact or block. A secret already in the Keychain is still substituted into a tool call unless rehydrate is off. Off by default: it gives up every catch in a tool's output, which is where a `cat .env` leak comes from.",
+      "description": "One switch: judge nothing but the prompts you submit. Tool output, tool arguments and peer deliveries are not scanned at all, so no entropy finding and no warning can come from anything but your own typing. It narrows WHERE the detector looks and nothing else — it overrides onToolResult and onToolInput, while onPrompt still chooses redact or block and keychain still offers to save what it catches. Off by default: it gives up every catch in a tool's output, which is where a `cat .env` leak comes from.",
       "default": false
     },
     "shapeRules": {

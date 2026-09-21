@@ -13,8 +13,9 @@
  *   5. a saved secret is listed to the model next session as `[secret:NAME]`,
  *      so step 4 works in every session after this one
  *
- * `promptOnly` collapses all of that to one door: only what the person typed
- * and submitted is scanned, and the Keychain is never offered. See resolveDoors.
+ * `promptOnly` collapses the watching to one door -- only what the person typed
+ * and submitted is scanned -- and leaves the rest of the cycle alone. See
+ * resolveDoors.
  *
  * Failure mode is OPEN: a hook that throws or overruns its 10 s budget is
  * skipped and the content passes unredacted. Each `.catch` says so on screen.
@@ -81,31 +82,33 @@ export type Doors = {
 }
 
 /**
- * `promptOnly` is ONE switch over all four doors: scan nothing but what the
- * person typed and submitted, and never raise a Keychain offer. It closes the
+ * `promptOnly` narrows WHERE the detector looks, and nothing else: scan what
+ * the person typed and submitted, and judge no other surface. It closes the
  * tool doors and the delivery door rather than lowering a threshold, so under
- * it the detector cannot flag a value the person did not type -- no tool
- * output, no tool argument, no peer delivery, and so no save prompt for one.
+ * it a value the person did not type cannot become a finding, and cannot
+ * become a warning -- no tool output, no tool argument, no peer delivery.
  *
- * It overrides `onToolResult`, `onToolInput` and `keychain` outright, because
- * a mode whose promise is "nothing but my prompts" cannot be half-held by an
- * option set earlier. `onPrompt` is left alone: redact or block is still the
- * person's choice, and `off` under `promptOnly` is the whole plugin off.
+ * It overrides `onToolResult` and `onToolInput` outright, because a mode whose
+ * promise is "nothing but my prompts" cannot be half-held by an option set
+ * earlier. What happens to a finding is untouched: `onPrompt` still chooses
+ * redact or block, and `keychain` still decides whether a caught secret is
+ * offered to the Keychain -- a prompt finding is exactly the one worth saving.
  *
  * It is not the default. It gives up every catch that happens in a tool's
  * output, which is where a `cat .env` or an `aws sts` leak comes from.
  */
 export function resolveDoors(options: PluginOptions): Doors {
   const prompt = pick<PromptAction>(options.onPrompt, ['redact', 'block', 'off'], 'redact')
+  const keychain = pick<KeychainMode>(options.keychain, ['ask', 'auto', 'off'], 'ask')
   if (bool(options.promptOnly, false)) {
-    return { result: 'off', input: 'off', prompt, delivery: false, keychain: 'off' }
+    return { result: 'off', input: 'off', prompt, delivery: false, keychain }
   }
   return {
     result: pick<ResultAction>(options.onToolResult, ['redact', 'off'], 'redact'),
     input: pick<InputAction>(options.onToolInput, ['warn', 'deny', 'off'], 'warn'),
     prompt,
     delivery: true,
-    keychain: pick<KeychainMode>(options.keychain, ['ask', 'auto', 'off'], 'ask'),
+    keychain,
   }
 }
 
@@ -413,7 +416,7 @@ export const register: Register = (on, options) => {
       $.clock.every(30_000, () => void flushLedger($))
     }
     $.ui.log(
-      `${promptOnly ? 'prompt-only: your prompts alone are scanned, the Keychain never asks; ' : ''}` +
+      `${promptOnly ? 'prompt-only: your prompts alone are scanned; ' : ''}` +
         `output ${onToolResult}, arguments ${onToolInput}, prompts ${onPrompt}, deliveries ` +
         `${onDelivery ? 'scanned' : 'off'}, shape rules on ${shapeScope}, keychain ${keychain}, ` +
         `rehydrate ${rehydrateOn}; ${held} secret(s) held.`,

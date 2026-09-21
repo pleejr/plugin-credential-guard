@@ -38,8 +38,7 @@ and referenced by placeholder. `aws configure set aws_secret_access_key
 | What a peer session, relay or webhook delivered | `session.receive` | redact | **on** |
 | Which secrets the model may reference | `prompt.context` | listed by name | — |
 
-`promptOnly` closes every door but the third and turns the Keychain offer off —
-see below.
+`promptOnly` closes every door but the third — see below.
 
 The last column is `shapeRules`, and it separates the two kinds of rule. A
 **named pattern** (`ghp_`, `AKIA` beside its secret half, a PEM block, a JWT)
@@ -57,8 +56,8 @@ never written down.
 
 ## Watching only what you type
 
-`promptOnly` is one switch that scopes the whole plugin to the prompts you
-submit:
+`promptOnly` narrows the plugin to one surface — the prompts you submit — and
+changes nothing about what it then does with what it finds:
 
 | Door | Ordinarily | Under `promptOnly` |
 |---|---|---|
@@ -66,20 +65,18 @@ submit:
 | A tool call's arguments | warn | **not scanned** |
 | What you typed or pasted | redact | redact (or `block`) |
 | A peer or webhook delivery | redact | **not scanned** |
-| The Keychain offer | asks per secret | **never asks** |
 
-Nothing outside your own typing is judged, so no entropy from a `terraform
-output`, a `curl` response or a peer delivery can produce a finding — and with
-no finding outside a prompt, and the Keychain forced off, no session raises a
-save dialog at all. It overrides `onToolResult`, `onToolInput` and `keychain`
-outright; `onPrompt` still chooses whether a caught prompt is redacted or held
-back, and `onPrompt: off` under it is the whole plugin off.
+No entropy from a `terraform output`, a `curl` response or a peer delivery is
+judged at all, so nothing outside your own typing can produce a finding, a
+warning line, or a status count. It overrides `onToolResult` and `onToolInput`
+outright, because a mode promising "nothing but my prompts" cannot be half-held
+by an option set earlier.
 
-Two things stay on, because neither judges anything or asks anything: a secret
-already in the Keychain is still listed to the model and still substituted into
-a tool call (turn that off with `rehydrate: false`), and the near-miss ledger
-still records shapes — of prompts only, which `/credential-guard` says at the
-foot of its report.
+What happens to a finding is untouched. `onPrompt` still chooses redact or
+block, `keychain` still offers each caught secret to the login Keychain — a
+value you typed is exactly the one worth saving — and a placeholder still
+substitutes back into a tool call. The near-miss ledger still records shapes,
+of prompts only, which `/credential-guard` says at the foot of its report.
 
 It is not the default. A prompt is where a person pastes a key, but a tool's
 output is where `cat .env`, `aws sts` and `terraform output` put one, and this
@@ -394,7 +391,7 @@ folder run `/plugin-types .claude/types` once, then `tsc -p .` typechecks.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `promptOnly` | false | Scan your submitted prompts and nothing else; never offer the Keychain |
+| `promptOnly` | false | Judge your submitted prompts and nothing else; overrides the two tool doors |
 | `shapeRules` | prompt | Where `entropy`/`hex` run: `prompt`, `prompt+result`, `all`, `off` |
 | `minLength` | 24 | Shortest run the entropy rule considers |
 | `entropyRatio` | 0.85 | Normalized entropy needed to flag |

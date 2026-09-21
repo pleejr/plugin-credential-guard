@@ -19,10 +19,12 @@ test('promptOnly closes the tool doors and the delivery door', () => {
   expect(d.prompt).toBe('redact')
 })
 
-test('promptOnly never lets the Keychain ask', () => {
-  expect(resolveDoors({ promptOnly: true }).keychain).toBe('off')
-  expect(resolveDoors({ promptOnly: true, keychain: 'ask' }).keychain).toBe('off')
-  expect(resolveDoors({ promptOnly: true, keychain: 'auto' }).keychain).toBe('off')
+test('promptOnly leaves the Keychain offer exactly as it was', () => {
+  // The mode narrows WHERE the detector looks. What happens to a finding it
+  // does make -- a secret the person typed -- is still the person's setting.
+  expect(resolveDoors({ promptOnly: true }).keychain).toBe('ask')
+  expect(resolveDoors({ promptOnly: true, keychain: 'auto' }).keychain).toBe('auto')
+  expect(resolveDoors({ promptOnly: true, keychain: 'off' }).keychain).toBe('off')
 })
 
 test('promptOnly overrides a tool door that was explicitly turned on', () => {
