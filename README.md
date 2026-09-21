@@ -356,12 +356,17 @@ real string, which only exists in memory during the session that saw it.
 
 ## Install and run
 
-From the marketplace this repo publishes:
+From the `pleejr` marketplace, which carries this plugin by reference — the
+code stays in this repo:
 
 ```
-/plugin marketplace add pleejr/plugin-credential-guard
+/plugin marketplace add pleejr/skills
 /plugin install credential-guard@pleejr
 ```
+
+This repo no longer publishes a marketplace of its own. It did, under the name
+`pleejr`, which is the name `pleejr/skills` already uses, so a machine adding
+both had one name for two sources.
 
 Or from a checkout, permanently as `credential-guard@skills-dir`:
 
