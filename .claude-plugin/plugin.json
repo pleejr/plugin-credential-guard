@@ -1,13 +1,19 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "credential-guard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Keeps credentials out of the session transcript and keeps them usable: scans tool results, tool arguments, prompts and peer deliveries, redacts what it finds behind a placeholder, and offers the macOS login Keychain so later sessions can still use it.",
   "author": {
     "name": "pleejr",
     "email": "preston@pleejr.com"
   },
   "userConfig": {
+    "promptOnly": {
+      "type": "boolean",
+      "title": "Watch only what I type",
+      "description": "One switch: judge nothing but the prompts you submit. Tool output, tool arguments and peer deliveries are not scanned at all, so no entropy finding and no warning can come from anything but your own typing. It narrows WHERE the detector looks and nothing else — it overrides onToolResult and onToolInput, while onPrompt still chooses redact or block and keychain still offers to save what it catches. Off by default: it gives up every catch in a tool's output, which is where a `cat .env` leak comes from.",
+      "default": false
+    },
     "shapeRules": {
       "type": "string",
       "title": "Where the shape-only rules run",

@@ -38,6 +38,8 @@ and referenced by placeholder. `aws configure set aws_secret_access_key
 | What a peer session, relay or webhook delivered | `session.receive` | redact | **on** |
 | Which secrets the model may reference | `prompt.context` | listed by name | — |
 
+`promptOnly` closes every door but the third — see below.
+
 The last column is `shapeRules`, and it separates the two kinds of rule. A
 **named pattern** (`ghp_`, `AKIA` beside its secret half, a PEM block, a JWT)
 and an **assignment the text itself called a credential** (`API_KEY=…`) run on
@@ -51,6 +53,34 @@ default and `shapeRules` moves it (`prompt+result`, `all`, `off`).
 A finding becomes `[redacted <rule> #<fingerprint>]`. The fingerprint is FNV-1a
 of the value: the same secret reads the same everywhere, and the value itself is
 never written down.
+
+## Watching only what you type
+
+`promptOnly` narrows the plugin to one surface — the prompts you submit — and
+changes nothing about what it then does with what it finds:
+
+| Door | Ordinarily | Under `promptOnly` |
+|---|---|---|
+| A tool's output | redact | **not scanned** |
+| A tool call's arguments | warn | **not scanned** |
+| What you typed or pasted | redact | redact (or `block`) |
+| A peer or webhook delivery | redact | **not scanned** |
+
+No entropy from a `terraform output`, a `curl` response or a peer delivery is
+judged at all, so nothing outside your own typing can produce a finding, a
+warning line, or a status count. It overrides `onToolResult` and `onToolInput`
+outright, because a mode promising "nothing but my prompts" cannot be half-held
+by an option set earlier.
+
+What happens to a finding is untouched. `onPrompt` still chooses redact or
+block, `keychain` still offers each caught secret to the login Keychain — a
+value you typed is exactly the one worth saving — and a placeholder still
+substitutes back into a tool call. The near-miss ledger still records shapes,
+of prompts only, which `/credential-guard` says at the foot of its report.
+
+It is not the default. A prompt is where a person pastes a key, but a tool's
+output is where `cat .env`, `aws sts` and `terraform output` put one, and this
+mode gives up every catch there.
 
 ## The measure
 
@@ -361,6 +391,7 @@ folder run `/plugin-types .claude/types` once, then `tsc -p .` typechecks.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `promptOnly` | false | Judge your submitted prompts and nothing else; overrides the two tool doors |
 | `shapeRules` | prompt | Where `entropy`/`hex` run: `prompt`, `prompt+result`, `all`, `off` |
 | `minLength` | 24 | Shortest run the entropy rule considers |
 | `entropyRatio` | 0.85 | Normalized entropy needed to flag |
