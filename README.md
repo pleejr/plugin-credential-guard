@@ -390,7 +390,16 @@ claude plugin test .        # unit tests and the hooks through the real engine
 ```
 
 The type declarations are generated, not committed. In a session inside this
-folder run `/plugin-types .claude/types` once, then `tsc -p .` typechecks.
+folder run `/plugin-types .claude/types` once, then:
+
+```
+npm install                 # typescript only; nothing here ships
+npm run typecheck           # tsc -p .
+```
+
+The typechecker earns its place: `$.env.get` and `$.env.set` are async, and a
+forgotten `await` on one of them reads as a plain string everywhere the engine
+strips types. `npm run typecheck` is what catches it.
 
 ## Options
 
