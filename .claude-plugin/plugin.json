@@ -112,12 +112,6 @@
       "description": "Comma-separated fingerprints (the 8 hex characters in a redaction marker) to stop flagging.",
       "default": ""
     },
-    "trustFile": {
-      "type": "string",
-      "title": "Trusted corpus list",
-      "description": "Path to a trust list built by bin/trust-vault.ts from a tracked corpus that already passes its own sensitivity gate (a wiki vault, a runbook repo). Its fingerprints stop being flagged. Only the shape-only rules can be vouched for: a named provider pattern, and an assignment the text itself called a credential, are refused at generation and again on load. Empty means trust nothing.",
-      "default": ""
-    },
     "keychain": {
       "type": "string",
       "title": "macOS Keychain",
