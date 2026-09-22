@@ -251,6 +251,14 @@ security find-generic-password -s claude-code-credential-guard -a <fingerprint> 
 security delete-generic-password -s claude-code-credential-guard -a <fingerprint>
 ```
 
+Deleting the item is enough. The index row naming it is dropped the next time a
+placeholder for it fails to resolve, so the two stores cannot drift into a state
+where a secret is offered by a name nothing can produce. That covers the item
+removed by hand, as above, and the rows stranded when the plugin's store changes
+— its key is `<name>@<source>`, so installing from a different source starts an
+empty store while the Keychain, keyed by service and fingerprint, keeps every
+value.
+
 Set `keychain` to `auto` to save without being asked, or `off` to never ask.
 
 ## The trust list

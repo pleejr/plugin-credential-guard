@@ -1,5 +1,5 @@
 import { test, expect, mock } from 'claude-code/testing'
-import { INDEX_KEY, indexBlock, keychainSave, normalizeLabel, referencesIn, rehydrate, suggestLabel } from '../hooks/vault.ts'
+import { INDEX_KEY, indexBlock, keychainSave, normalizeLabel, referencesIn, rehydrate, suggestLabel, pruneOrphans } from '../hooks/vault.ts'
 import { fingerprint } from '../hooks/scan.ts'
 
 const SECRET = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
@@ -118,4 +118,73 @@ test('a refused write reports the reason without the value in it', async () => {
     expect(r.error.includes('[value]')).toBe(true)
     expect(r.error.includes('6768705f')).toBe(false)
   }
+})
+
+test('an index row whose Keychain item is gone is dropped', () => {
+  const index = {
+    aaaaaaaa: { label: 'LIVE', rule: 'github-token', savedAt: 1 },
+    bbbbbbbb: { label: 'GONE', rule: 'entropy', savedAt: 2 },
+  }
+  const r = pruneOrphans(index, ['bbbbbbbb'])
+  expect(r.dropped).toEqual(['bbbbbbbb'])
+  expect(Object.keys(r.index)).toEqual(['aaaaaaaa'])
+  // the input is left alone; the caller decides whether to persist
+  expect(Object.keys(index).length).toBe(2)
+})
+
+test('a fingerprint the index never named is not a prune', () => {
+  // A marker caught this session and never saved has no row. Treating it as an
+  // orphan would make every unresolvable placeholder look like a deletion.
+  const index = { aaaaaaaa: { label: 'LIVE', rule: 'github-token', savedAt: 1 } }
+  const r = pruneOrphans(index, ['cccccccc'])
+  expect(r.dropped).toEqual([])
+  expect(r.index).toBe(index)
+})
+
+test('nothing unresolved means the index is returned untouched', () => {
+  const index = { aaaaaaaa: { label: 'LIVE', rule: 'github-token', savedAt: 1 } }
+  const r = pruneOrphans(index, [])
+  expect(r.dropped).toEqual([])
+  expect(r.index).toBe(index)
+})
+
+test('a fingerprint listed twice is dropped once', () => {
+  const index = { bbbbbbbb: { label: 'GONE', rule: 'entropy', savedAt: 2 } }
+  const r = pruneOrphans(index, ['bbbbbbbb', 'bbbbbbbb'])
+  expect(r.dropped).toEqual(['bbbbbbbb'])
+  expect(Object.keys(r.index).length).toBe(0)
+})
+
+test('a placeholder the Keychain cannot resolve prunes its index row', async ($, on) => {
+  mock.clock(on)
+
+  // The store is kept by hand rather than with `mock.store`, because the test
+  // has to SEE the write: the test's `$` is the engine, `$.store` is the
+  // plugin's own, and `mock.store` already owns `store.set`.
+  const store = new Map<string, unknown>([
+    [INDEX_KEY, { [FP]: { label: 'AWS_TEST', rule: 'aws-access-key', savedAt: 0 } }],
+  ])
+  on('store.get', ($$, e) => ({ value: store.get(e.key) ?? null }))
+  on('store.set', ($$, e) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
+
+  // The item was deleted outside the plugin: `security` exits 44, not found.
+  on('process.run', () => ({ value: { exitCode: 44, stdout: '', stderr: '' } }))
+
+  let ran = ''
+  on('tool.call', ($$, e) => {
+    ran = e.tool === 'Bash' ? e.command : ''
+    return { result: { stdout: 'done', stderr: '', interrupted: false } }
+  })
+
+  await $.tool.call({ tool: 'Bash', command: 'aws configure set aws_secret_access_key [secret:AWS_TEST]' })
+
+  // The placeholder is left standing rather than emptied -- unchanged behaviour.
+  expect(ran.includes('[secret:AWS_TEST]')).toBe(true)
+
+  // and the row that could never be resolved again is gone, so the next session
+  // does not offer a secret it cannot produce.
+  expect(Object.keys(store.get(INDEX_KEY) as Record<string, unknown>)).toEqual([])
 })
