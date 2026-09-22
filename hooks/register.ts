@@ -35,6 +35,7 @@ import {
   INDEX_KEY,
   indexBlock,
   keychainRead,
+  pruneOrphans,
   keychainSave,
   normalizeLabel,
   referencesIn,
@@ -354,9 +355,17 @@ async function resolveRefs($: EngineInterface, text: string): Promise<Map<string
   const idx = await loadIndex($)
   const byLabel = new Map(Object.entries(idx).map(([fp, v]) => [v.label, fp]))
 
+  // A fingerprint the index names but the Keychain cannot return is an orphan:
+  // the value was deleted and the row outlived it. Collected here and pruned
+  // below, so the next session does not offer a secret it cannot resolve.
+  const unresolved: string[] = []
+
   for (const fp of new Set(refs.fingerprints)) {
     const v = vault.get(fp) ?? (await keychainRead(runner($), fp))
-    if (v === undefined) continue
+    if (v === undefined) {
+      unresolved.push(fp)
+      continue
+    }
     vault.set(fp, v)
     out.set(fp, v)
   }
@@ -364,9 +373,21 @@ async function resolveRefs($: EngineInterface, text: string): Promise<Map<string
     const fp = byLabel.get(label)
     if (fp === undefined) continue
     const v = vault.get(fp) ?? (await keychainRead(runner($), fp))
-    if (v === undefined) continue
+    if (v === undefined) {
+      unresolved.push(fp)
+      continue
+    }
     vault.set(fp, v)
     out.set(label, v)
+  }
+
+  const pruned = pruneOrphans(idx, unresolved)
+  if (pruned.dropped.length > 0) {
+    index = pruned.index
+    await $.store.set(INDEX_KEY, pruned.index)
+    for (const fp of pruned.dropped) {
+      $.ui.log(`#${fp} is no longer in your Keychain — dropped it from the index`)
+    }
   }
   return out
 }

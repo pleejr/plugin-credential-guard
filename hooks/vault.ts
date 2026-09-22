@@ -197,6 +197,33 @@ export async function keychainDelete(run: Run, fingerprint: string): Promise<boo
   return r.exitCode === 0
 }
 
+/**
+ * Drops index rows whose Keychain item is gone.
+ *
+ * The state lives in two stores and only one of them had a delete path:
+ * `security delete-generic-password` removes the value and leaves the row, so a
+ * later session reads the index, offers the secret by name, and cannot resolve
+ * it. Pruning on a failed READ rather than on our own delete is deliberate --
+ * it also covers the item removed by hand outside the plugin, and the row
+ * stranded when the plugin's store changes (its key is `<name>@<source>`, so a
+ * reinstall from a different source starts an empty store while the Keychain,
+ * keyed by service and fingerprint, keeps every value).
+ *
+ * Returns a new index rather than mutating, so the caller decides whether the
+ * write is worth making.
+ */
+export function pruneOrphans(
+  index: VaultIndex,
+  unresolved: Iterable<string>,
+): { index: VaultIndex; dropped: string[] } {
+  const dropped: string[] = []
+  for (const fp of new Set(unresolved)) if (index[fp] !== undefined) dropped.push(fp)
+  if (dropped.length === 0) return { index, dropped }
+  const next: VaultIndex = {}
+  for (const [fp, entry] of Object.entries(index)) if (!dropped.includes(fp)) next[fp] = entry
+  return { index: next, dropped }
+}
+
 /** The context block that tells the model which secrets it may reference. */
 export function indexBlock(index: VaultIndex): string | undefined {
   const rows = Object.entries(index)
