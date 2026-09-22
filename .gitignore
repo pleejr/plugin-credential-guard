@@ -1,4 +1,9 @@
 # Generated from the running build by `/plugin-types .claude/types`.
 # Version-specific and 450 KB; regenerate rather than commit.
+# A trailing slash does not match a SYMLINK of the same name, and a worktree
+# borrowing these from the primary checkout makes exactly that -- which a
+# `git add -A` then commits as an absolute path onto someone else's disk.
 .claude/types/
+/.claude
 node_modules/
+/node_modules
