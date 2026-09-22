@@ -65,12 +65,19 @@ changes nothing about what it then does with what it finds:
 | A tool call's arguments | warn | **not scanned** |
 | What you typed or pasted | redact | redact (or `block`) |
 | A peer or webhook delivery | redact | **not scanned** |
+| A task notification, schedule or plugin prompt | redact, without shape rules | **not scanned** |
 
 No entropy from a `terraform output`, a `curl` response or a peer delivery is
 judged at all, so nothing outside your own typing can produce a finding, a
 warning line, or a status count. It overrides `onToolResult` and `onToolInput`
 outright, because a mode promising "nothing but my prompts" cannot be half-held
 by an option set earlier.
+
+"Typed" is read from the submission's `origin`, not its text: Enter at the
+terminal, the Remote Control bridge, an SDK host's turn, or your Slack ping.
+A task notification arrives through the same event carrying a `<tool-use-id>`
+the shape rules would read as a key, so it is skipped here, as is the context
+other hooks attach beside a prompt.
 
 What happens to a finding is untouched. `onPrompt` still chooses redact or
 block, `keychain` still offers each caught secret to the login Keychain — a

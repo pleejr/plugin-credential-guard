@@ -112,6 +112,30 @@ export function resolveDoors(options: PluginOptions): Doors {
   }
 }
 
+/**
+ * The `prompt.submit` origins a person typed: Enter at the terminal, the
+ * Remote Control bridge, an SDK host's turn, the owner's Slack ping. Everything
+ * else reaching `prompt.submit` -- a task notification, a schedule, a peer, a
+ * plugin -- was written by the harness or by another session. An origin this
+ * build does not name is not presumed typed.
+ */
+const TYPED = new Set(['composer', 'bridge', 'sdk', 'slack-ping'])
+
+export function typedByPerson(kind: string): boolean {
+  return TYPED.has(kind)
+}
+
+/**
+ * How a `prompt.submit` text is judged. A task notification carries a
+ * `<tool-use-id>` the shape rules read as a key, so machine-written text never
+ * gets the prompt's shape rules: under `promptOnly` it is not scanned at all,
+ * and ordinarily it is scanned as a tool's output is.
+ */
+export function promptSurface(kind: string, promptOnly: boolean): 'prompt' | 'machine' | 'skip' {
+  if (typedByPerson(kind)) return 'prompt'
+  return promptOnly ? 'skip' : 'machine'
+}
+
 // --- module state ----------------------------------------------------------
 // The module is loaded once per session, so its scope is the session's scope.
 
@@ -495,8 +519,11 @@ export const register: Register = (on, options) => {
   // --- what the person typed or pasted --------------------------------------
   on('prompt.submit', async ($, e, next) => {
     if (onPrompt === 'off') return next(e)
-    const prompt = redactText(e.text, promptOpts)
-    const ctx = redactAll(e.context, promptOpts)
+    const surface = promptSurface(e.origin.kind, promptOnly)
+    if (surface === 'skip') return next(e)
+    const prompt = redactText(e.text, surface === 'prompt' ? promptOpts : resultOpts)
+    // `context` is what hooks attached beside the prompt; no person typed it.
+    const ctx = promptOnly ? { list: e.context, findings: [] } : redactAll(e.context, resultOpts)
     const findings = [...prompt.findings, ...ctx.findings]
     await noteNear($, prompt.near, 'prompt')
     if (findings.length === 0) return next(e)
