@@ -168,6 +168,27 @@ let rehydrateEgress = false
 const runner = ($: EngineInterface): Run => (argv, init) => $.process.run(argv, init)
 
 /**
+ * Expands a `~/`-prefixed `trustFile` against HOME.
+ *
+ * `home` is whatever `$.env.get('HOME')` resolved to: a string, or `undefined`
+ * when it is unset. It is checked at RUNTIME and not only in the types, because
+ * the first cut of the caller forgot the `await`. `home` was then a Promise,
+ * `home !== ''` was always true, the path expanded to one beginning
+ * `[object Promise]`, and the trust list silently vouched for nothing -- a
+ * suppression list failing in the safe direction, and therefore invisible. A
+ * The parameter is typed `string | undefined` so the compiler rejects a caller
+ * that hands over the un-awaited Promise -- that is the signal that catches the
+ * bug before it ships. The runtime `typeof` check below is the second line: the
+ * engine strips types at load, so a cast or an untyped call site would sail
+ * past the compiler and reach here anyway.
+ */
+export function expandTrustPath(trustFile: string, home: string | undefined): string {
+  if (!trustFile.startsWith('~/')) return trustFile
+  if (typeof home !== 'string' || home === '') return trustFile
+  return home + trustFile.slice(1)
+}
+
+/**
  * Merges a trusted corpus's fingerprints into the allow set, once per session.
  *
  * The file is read rather than the corpus scanned: walking a 2300-file vault
@@ -179,8 +200,7 @@ const runner = ($: EngineInterface): Run => (argv, init) => $.process.run(argv, 
 async function loadTrust($: EngineInterface): Promise<void> {
   if (trustLoaded || trustFile === '') return
   trustLoaded = true
-  const home = $.env.get('HOME') ?? ''
-  const path = trustFile.startsWith('~/') && home !== '' ? home + trustFile.slice(1) : trustFile
+  const path = expandTrustPath(trustFile, await $.env.get('HOME'))
   try {
     if (!(await $.fs.exists(path))) {
       $.ui.log(`no trust list at ${path} -- trusting nothing`, { to: 'debug' })
