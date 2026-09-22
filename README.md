@@ -261,44 +261,6 @@ value.
 
 Set `keychain` to `auto` to save without being asked, or `off` to never ask.
 
-## The trust list
-
-A wiki vault, a runbook repository, any tracked tree whose rule is *no secrets
-in here* has already answered this plugin's question for the text it holds. The
-trust list turns that answer into fingerprints:
-
-```
-node --experimental-strip-types bin/trust-vault.ts --root "$WIKI_PATH"
-```
-
-```
-trust-vault: 793 tracked file(s) under /Users/pleejr/Documents/repos/pleejr-wiki
-trust-vault: 5 fingerprint(s) vouched for, 0 refused
-trust-vault: wrote ~/.claude/credential-guard/trust.json
-```
-
-Point `trustFile` at that file and those five values stop being redacted: the
-same 793 files measured 5 findings without the list and 0 with it, on
-2026-09-18.
-
-It reads `git ls-files`, not a directory walk — what the corpus's write-time gate
-actually saw is what may vouch for anything, so untracked scratch and other
-checkouts of the same repository are never consulted.
-
-**Only the shape-only rules can be vouched for.** `entropy` and `hex` judge a run
-by how it LOOKS, which is where a benign identifier in an incident note collides
-with a key. A named provider pattern, and an assignment whose own text called the
-value a credential, are refused — at generation, where they are printed with
-their path and exit the script non-zero, and again when the file is read, so a
-hand-edited list cannot widen itself. A corpus holding one of those is not noise
-to suppress: it is a credential sitting in a tree whose rule says it holds none,
-and the corpus is what has to change.
-
-**No value is written down here either.** An entry is a fingerprint, a length, a
-ratio and the path it was first seen in. Re-run the generator when the corpus
-moves; a stale fingerprint suppresses nothing, because nothing has that shape any
-more.
-
 ## The near-miss ledger
 
 The 0.85 cut was chosen against a corpus I wrote. The ledger says what *your*
@@ -425,7 +387,6 @@ strips types. `npm run typecheck` is what catches it.
 | `onPrompt` | redact | `redact`, `block` or `off` |
 | `maxScanChars` | 2000000 | Characters scanned per value |
 | `allow` | "" | Comma-separated fingerprints to stop flagging |
-| `trustFile` | "" | A trust list built from a corpus that already passes its own sensitivity gate |
 | `proximityWindow` | 60 | Characters from a cue word that still count as announced; 0 disables |
 | `proximityRatio` | 0.70 | The entropy bar inside that window |
 | `announcedMinLength` | 16 | The length floor inside that window, or beside an assignment |

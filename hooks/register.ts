@@ -44,7 +44,6 @@ import {
   type Run,
   type VaultIndex,
 } from './vault.ts'
-import { parseTrust } from './trust.ts'
 
 type ResultAction = 'redact' | 'off'
 type InputAction = 'warn' | 'deny' | 'off'
@@ -119,14 +118,10 @@ export function resolveDoors(options: PluginOptions): Doors {
 /** fingerprint -> value, for this session only. Never written to disk. */
 const vault = new Map<string, string>()
 /**
- * Fingerprints the detector must not flag: the `allow` option, plus whatever a
- * trusted corpus vouches for. One Set, held here rather than rebuilt, so the
- * trust list can be merged into it after `scanOpts` is already in use.
+ * Fingerprints the detector must not flag, from the `allow` option. One Set,
+ * held here rather than rebuilt, so it stays the same object `scanOpts` took.
  */
 const allowSet = new Set<string>()
-/** Where a corpus that has passed its own sensitivity gate is recorded. */
-let trustFile = ''
-let trustLoaded = false
 /** What the Keychain holds, as `$.store` records it. Values are not here. */
 let index: VaultIndex | null = null
 /** Caught this session and not yet put to the person. */
@@ -167,61 +162,6 @@ let rehydrateEgress = false
 
 /** `$.process.run`, as the vault module takes it. */
 const runner = ($: EngineInterface): Run => (argv, init) => $.process.run(argv, init)
-
-/**
- * Expands a `~/`-prefixed `trustFile` against HOME.
- *
- * `home` is whatever `$.env.get('HOME')` resolved to: a string, or `undefined`
- * when it is unset. It is checked at RUNTIME and not only in the types, because
- * the first cut of the caller forgot the `await`. `home` was then a Promise,
- * `home !== ''` was always true, the path expanded to one beginning
- * `[object Promise]`, and the trust list silently vouched for nothing -- a
- * suppression list failing in the safe direction, and therefore invisible. A
- * The parameter is typed `string | undefined` so the compiler rejects a caller
- * that hands over the un-awaited Promise -- that is the signal that catches the
- * bug before it ships. The runtime `typeof` check below is the second line: the
- * engine strips types at load, so a cast or an untyped call site would sail
- * past the compiler and reach here anyway.
- */
-export function expandTrustPath(trustFile: string, home: string | undefined): string {
-  if (!trustFile.startsWith('~/')) return trustFile
-  if (typeof home !== 'string' || home === '') return trustFile
-  return home + trustFile.slice(1)
-}
-
-/**
- * Merges a trusted corpus's fingerprints into the allow set, once per session.
- *
- * The file is read rather than the corpus scanned: walking a 2300-file vault
- * inside a hook's 10 s budget is not a thing to do on every session start, and
- * the generator (`bin/trust-vault.ts`) already refused everything a shape-only
- * rule did not find. It fails QUIET and EMPTY -- a missing or malformed trust
- * list trusts nothing, which is the direction a suppression list must fail in.
- */
-async function loadTrust($: EngineInterface): Promise<void> {
-  if (trustLoaded || trustFile === '') return
-  trustLoaded = true
-  const path = expandTrustPath(trustFile, await $.env.get('HOME'))
-  try {
-    if (!(await $.fs.exists(path))) {
-      $.ui.log(`no trust list at ${path} -- trusting nothing`, { to: 'debug' })
-      return
-    }
-    const parsed = parseTrust(JSON.parse(await $.fs.read(path)))
-    if (parsed.error !== undefined) {
-      $.ui.log(`the trust list at ${path} is unusable (${parsed.error}) -- trusting nothing`)
-      return
-    }
-    for (const fp of parsed.fingerprints) allowSet.add(fp)
-    $.ui.log(
-      `trusting ${parsed.fingerprints.size} fingerprint(s) vouched for on ${parsed.generatedAt}` +
-        `${parsed.refused > 0 ? `, ${parsed.refused} refused at generation` : ''}`,
-      { to: 'debug' },
-    )
-  } catch (e) {
-    $.ui.log(`could not read the trust list at ${path} (${String(e)}) -- trusting nothing`)
-  }
-}
 
 async function loadIndex($: EngineInterface): Promise<VaultIndex> {
   if (index !== null) return index
@@ -424,8 +364,6 @@ export const register: Register = (on, options) => {
   }
   allowSet.clear()
   for (const fp of fingerprints(options.allow)) allowSet.add(fp)
-  trustFile = typeof options.trustFile === 'string' ? options.trustFile : ''
-  trustLoaded = false
   shapeScope = pick<ShapeScope>(options.shapeRules, ['prompt', 'prompt+result', 'all', 'off'], 'prompt')
   promptOpts = { ...scanOpts, shapeRules: shapeScope !== 'off' }
   resultOpts = { ...scanOpts, shapeRules: shapeScope === 'prompt+result' || shapeScope === 'all' }
@@ -445,7 +383,6 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await loadTrust($)
     const idx = await loadIndex($)
     const held = Object.keys(idx).length
     if (ledgerOn) {
