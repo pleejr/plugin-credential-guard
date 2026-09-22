@@ -20,6 +20,7 @@
  * this file exists for.
  */
 import { redactText, describe, type Finding } from '../scan.ts'
+import { isMachineWritten, moduleIsSeated } from './decide.ts'
 
 /** Already-redacted text: the plugin's hook ran first, so this path stands down. */
 const MARKER = /\[redacted [a-z-]+ #[0-9a-f]{8}\]|\[secret:[A-Za-z0-9_]+\]/
@@ -48,7 +49,16 @@ const main = async (): Promise<void> => {
     return
   }
 
+  // The module owns the prompt when it is seated, and it REDACTS where this
+  // path can only block. Standing down on the environment rather than on the
+  // marker is what makes that reliable: the marker is present only if this hook
+  // is handed the text the module rewrote, which is not established.
+  if (moduleIsSeated(process.env.CLAUDE_CODE_ENABLE_FUNCTION_HOOKS)) return
+
   if (MARKER.test(prompt)) return
+
+  // Nothing here is actionable: no person typed it and no person can edit it.
+  if (isMachineWritten(prompt)) return
 
   let findings: readonly Finding[]
   try {

@@ -496,10 +496,27 @@ key, and the command-hook fallback stood down as designed.
 
 It **blocks** where the plugin would have redacted. A `UserPromptSubmit` command
 hook is given `additionalContext` and no way to return an edited prompt, so the
-whole prompt is held back on exit 2 and the reason is shown to the person. It
-stands down when the text already carries a redaction marker or a
-`[secret:NAME]` reference, so with the flag on the plugin's own hook still owns
-the prompt.
+whole prompt is held back on exit 2 and the reason is shown to the person.
+
+**It stands down whenever `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` says the module is
+seated**, which is the only stand-down that does not depend on hook ordering. A
+variable set to anything but `0`, `false`, `off`, `no` or empty means the module
+owns the prompt and redacts it; unset means the rollout flag decides, which is
+the window this path covers, so it runs. Set it to `1` and wire both without
+them fighting.
+
+The older stand-down — the text already carrying a redaction marker or a
+`[secret:NAME]` reference — is still checked, but it is **not** load-bearing and
+should not be relied on. It only works if this hook is handed the text the
+module rewrote, and that is unresolved: the fallback was observed standing down
+on 2026-09-18, and on 2026-09-21 it blocked a prompt the module had
+demonstrably redacted, exiting 2 on 4 of 5 realistic task notifications.
+
+A prompt the harness wrote — a `<task-notification>`, a `<system-reminder>` — is
+passed rather than blocked. No person typed it and no person can edit it, so
+exit 2 costs the delivery and offers nothing back. The check is anchored at the
+start of the prompt on purpose: every name added there is a name someone could
+paste above their own text to skip the guard.
 
 Failure is open and loud: no `node` on `PATH`, an unparseable payload or a
 throwing detector exits 0 with a notice on stdout, which the engine hands the

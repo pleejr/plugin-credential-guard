@@ -4,7 +4,7 @@
  * The plugin's own hooks never touch Node globals — the engine hands them `$` —
  * so `tsconfig.json` deliberately sets `"types": []`. A command hook is a
  * different shape: it is a process, reading stdin and answering with an exit
- * code. Declaring the three members it uses keeps that promise rather than
+ * code. Declaring the four members it uses keeps that promise rather than
  * pulling `@types/node` in for one file.
  */
 declare const process: {
@@ -13,6 +13,7 @@ declare const process: {
     on(event: 'data', listener: (chunk: string) => void): void
     on(event: 'end', listener: () => void): void
   }
+  readonly env: Readonly<Record<string, string | undefined>>
   readonly stdout: { write(text: string): boolean }
   readonly stderr: { write(text: string): boolean }
   exit(code: number): never
