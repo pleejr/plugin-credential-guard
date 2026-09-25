@@ -118,7 +118,12 @@ So a flag needs a **conjunction**, and entropy is one clause of it:
 1. **Named patterns** fire whatever the entropy: AWS access keys and session
    tokens, GitHub tokens and fine-grained PATs, Slack tokens and webhooks,
    Anthropic, OpenAI, Google, Stripe, npm and PyPI keys, JWTs, `Bearer` headers,
-   URL credentials, and PEM private-key blocks.
+   URL credentials, and PEM private-key blocks. A second list of vendor formats
+   — GitLab, SendGrid, Postman, HubSpot, Brevo, Shopify, DigitalOcean, Linear,
+   Notion, Atlassian, Sentry, Vault, Terraform Cloud, Doppler, Slack app,
+   Hugging Face, age — keeps an entropy floor of 0.5 on the match, so a
+   documentation placeholder (`glpat-xxxxxxxxxxxxxxxxxxxx`) has the shape and
+   still passes.
 2. **Assignment context** lowers the bar: `*SECRET*`, `*PASSWORD*`, `*API_KEY*`,
    `*TOKEN*` and kin on the left of `=` or `:` flag a value at ratio 0.55, since
    a weak password is still a secret. The name has to *be* the credential word,
@@ -176,22 +181,62 @@ So a flag needs a **conjunction**, and entropy is one clause of it:
 8. **Base64 is decoded before judging.** Encoded prose carries full entropy per
    character and none once decoded, which is the only honest way to tell
    `VGhpcyBpcyBq…` from a 32-byte key. The decoded text goes through the detector
-   once, so base64 **of** a secret is still caught.
+   once, so base64 **of** a secret is still caught. Only text with spaces counts
+   as prose: base64 of JSON or of `k=v` config is data, judged on its own
+   entropy, because its inner values are usually the secret.
+9. **A direct announcement is read with its punctuation.** `the password is
+   Summer2026!` and `api key: <value>` capture the value up to whitespace — the
+   token regex would split `Summer2026!` at the `!` — and judge it by entropy:
+   0.55 and 6 characters for a value a person chose (password, passphrase),
+   the cue bar (0.70, 16 characters) for a key or token. A UUID or a 40-hex run
+   announced this way is a key; unannounced, it stays an id and a git sha.
+   Prose about a password (`the password is required`, `stored in 1Password`,
+   `password: rds_password`) is rejected before a bit is measured.
+10. **A prefix can announce its own body.** `acme_api_<body>`, `sk_<body>`:
+    the body alone is judged at the cue bar, since a lowercase-and-digit key has
+    two character classes and fails the three-class rule a whole run is held to.
+    `shpat_<32 hex>`, `key-<32 hex>`, `dop_v1_<64 hex>` are judged on the hex
+    body against 16 symbols; measured whole, the prefix mixes the alphabet and
+    drags the ratio to ~0.77. A hash prefix (`sha256-`, `g`, `commit-`) keeps
+    the digest exemption.
+11. **A cue outranks a weak public word.** `account`, `tenant`, `client`,
+    `address`, `wallet`, `issuer`, `subject` and `task` name a container as
+    often as an id: `the api key for the new account: <key>` is a key. The
+    exception is an id-shaped run — pure hex or a UUID — which stays declared
+    public, because `token against account <32 hex>` is a Cloudflare account id.
+    Strong declarations (`fingerprint`, `SHA256:`, `commit`, `serial`, `key id`)
+    are never outranked.
 
 Git SHAs and sha256 sums (40 and 64 lowercase hex) pass by default — flagging
 every commit id would make the plugin unusable. Set `strictHex` to catch them.
 
 ## Measured
 
-`node --experimental-strip-types bench/corpus.ts` — 26 labelled secrets, 73
+`node --experimental-strip-types bench/corpus.ts` — 36 labelled secrets, 82
 labelled clean samples drawn from ordinary infrastructure session traffic (git
 log, terraform plan, ARNs, k8s names, npm integrity, AWS CLI JSON, paths, URLs,
 and prose that merely mentions keys and tokens).
 
 ```
-secrets caught     26/26
-clean passed       73/73
+secrets caught     36/36
+clean passed       82/82
 ```
+
+CI runs it, with `claude plugin test`, on every pull request.
+
+**Measured 2026-09-25, rules 9–11 and the vendor list.** 31 credential formats
+built to each vendor's published shape, 100 random samples each, in five
+phrasings (bare; after "here is the api key for the new account:"; after "the
+password is"; on the line after unrelated prose; as `API_KEY=`). Before, 0.4.2
+caught 0 of 100 in the second phrasing for most formats, and 0 in every
+phrasing for `dop_v1_` keys, UUID keys and passphrases. After, every vendor
+format of 24 characters or more is caught at 92–100 bare, except a 40-hex key.
+A 32-hex key after "…account:" stays missed on purpose (rule 11). Still missed without a label: a bare 40-hex key
+(indistinguishable from a git sha), a bare UUID key, a 20-character key, any
+password, and a passphrase outside a `passphrase` cue. False positives over 5489
+markdown files of a vault and the 1603 prompts typed into this machine's past
+sessions: 46 and 11 before, 46 and 11 after.
+
 
 That is the corpus in `bench/corpus.ts`, not a claim about the field. Add your
 own false positives and false negatives there; it exits non-zero on any miss.
@@ -491,6 +536,11 @@ throwing detector exits 0 with a notice on stdout, which the engine hands the
 model as context. Silence would reproduce the bug the fallback exists for.
 
 ## Limits, stated plainly
+
+- **A password needs a label.** `Summer2026!` on its own line is
+  indistinguishable from any other word with a digit; `password: Summer2026!` or
+  `the password is Summer2026!` is caught. The same holds for a bare UUID key, a
+  bare 40-hex key and a key shorter than 24 characters.
 
 - **A queued prompt is logged before any hook runs.** Headless `claude -p`, and
   anything else that enqueues a prompt, writes a
