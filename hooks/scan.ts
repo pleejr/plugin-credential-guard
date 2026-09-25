@@ -38,6 +38,34 @@ const PATTERNS: readonly (readonly [string, RegExp])[] = [
   ['bearer-header', /\b(?:[Aa]uthorization:\s*)?[Bb]earer\s+[A-Za-z0-9+/=_.-]{20,}/g],
 ]
 
+/**
+ * Vendor formats with a fixed prefix and shape. Unlike PATTERNS these keep an
+ * entropy floor on the whole match: a documentation placeholder
+ * (`glpat-xxxxxxxxxxxxxxxxxxxx`) has the shape and none of the randomness.
+ */
+const VENDOR_PATTERNS: readonly (readonly [string, RegExp])[] = [
+  ['gitlab-token', /\bgl(?:pat|dt|rt|ptt|soat|cbt|imt|oas)-[A-Za-z0-9_-]{20,}/g],
+  ['sendgrid-key', /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/g],
+  ['postman-key', /\bPMAK-[0-9a-f]{24}-[0-9a-f]{34}\b/g],
+  ['hubspot-token', /\bpat-(?:na|eu|ap)\d-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g],
+  ['brevo-key', /\bxkeysib-[0-9a-f]{64}-[A-Za-z0-9]{16}\b/g],
+  ['shopify-token', /\bshp(?:at|ca|pa|ss)_[0-9a-fA-F]{32}\b/g],
+  ['digitalocean-token', /\bdo[opr]_v1_[0-9a-f]{64}\b/g],
+  ['linear-key', /\blin_(?:api|oauth)_[A-Za-z0-9]{40}\b/g],
+  ['notion-token', /\bntn_[A-Za-z0-9]{40,}\b/g],
+  ['atlassian-token', /\bATATT3[A-Za-z0-9_=-]{150,}/g],
+  ['sentry-token', /\bsntr[ysu]_[A-Za-z0-9+/=_-]{40,}/g],
+  ['vault-token', /\bhv[sbr]\.[A-Za-z0-9_-]{24,}/g],
+  ['tfc-token', /\b[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}/g],
+  ['doppler-token', /\bdp\.(?:st|ct|sa|scim|audit|pt)\.[A-Za-z0-9._-]{40,}/g],
+  ['slack-app-token', /\bxapp-\d-[A-Z0-9]+-\d+-[a-f0-9]{64}\b/g],
+  ['huggingface-token', /\bhf_[A-Za-z]{34}\b/g],
+  ['age-secret-key', /\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b/g],
+]
+
+/** The entropy a vendor-pattern match must reach; below it is a placeholder. */
+const VENDOR_MIN_RATIO = 0.5
+
 /** `SECRET=<value>`: the name says it is a credential, so the entropy bar for
  *  the value drops -- a weak password is still a secret. */
 const ASSIGNED = /\b([A-Za-z0-9_]*(?:SECRET|PASSWORD|PASSWD|PRIVATE_KEY|API_?KEY|ACCESS_KEY|AUTH_?TOKEN|TOKEN|CREDENTIAL)[A-Za-z0-9_]*)\s*[:=]\s*["']?([^\s"'`,;]{8,})/gi
@@ -49,6 +77,16 @@ const ASSIGNED = /\b([A-Za-z0-9_]*(?:SECRET|PASSWORD|PASSWD|PRIVATE_KEY|API_?KEY
  * is often too repetitive to clear the ordinary threshold on its own.
  */
 const CUE = /\b(?:api[\s_-]?keys?|access[\s_-]?keys?|secret[\s_-]?keys?|signing[\s_-]?keys?|private[\s_-]?keys?|auth[\s_-]?tokens?|access[\s_-]?tokens?|tokens?|secrets?|passwords?|passwd|passphrases?|credentials?|creds?|bearer|api[\s_-]?secrets?)\b/gi
+
+/**
+ * A cue word that directly announces the next run -- `the password is X`,
+ * `api key: X`. The run is captured with its punctuation, which the TOKEN
+ * regex splits on: a chosen password is `Summer2026!`, not `Summer2026`.
+ */
+const ANNOUNCED = /\b(passwords?|passwd|passphrases?|pwd|pw|api[\s_-]?keys?|access[\s_-]?keys?|secret[\s_-]?keys?|app[\s_-]?keys?|auth[\s_-]?tokens?|access[\s_-]?tokens?|api[\s_-]?tokens?|tokens?|secrets?|credentials?)(?:\s+(?:is|was)\s+|\s*[:=]\s*)["'`]?([^\s"'`]{6,})/gi
+
+/** The cue words whose value a person chose, so it may be short and weak. */
+const CHOSEN = /^(?:passwords?|passwd|passphrases?|pwd|pw)$/i
 
 /**
  * Text immediately to the LEFT of a candidate that declares what follows to be
@@ -67,18 +105,30 @@ const PUBLIC_LEAD = new RegExp(
       [
         'fingerprints?', 'thumbprint', 'serials?', 'serial[\\s_-]?numbers?',
         'clients?', 'client[\\s_-]?id', 'key[\\s_-]?id', 'public[\\s_-]?key', 'pubkey',
-        'site[\\s_-]?key', 'sitekey', 'issuer', 'subject', 'checksums?', 'digest',
-        'commit', 'sha', 'etag', 'accounts?', 'tenants?', 'wallet', 'address',
+        'site[\\s_-]?key', 'sitekey', 'checksums?', 'digest',
+        'commit', 'sha', 'etag',
         'request[\\s_-]?id', 'trace[\\s_-]?id', 'correlation[\\s_-]?id',
         // An ECS task id is 32 lowercase hex and appears in every describe-tasks
         // call: measured 6 times in 8957 shell commands to 2026-09-18.
-        'tasks?', 'task[\\s_-]?ids?',
+        'task[\\s_-]?ids?',
       ].join('|') +
       String.raw`)\b["'\`\s:=(,-]{0,8}$`,
     // The path of an ordinary URL. A query string is excluded on purpose --
     // `?token=<value>` is exactly the leak this plugin exists to catch.
     String.raw`https?://[A-Za-z0-9.-]+(?:/[A-Za-z0-9._~-]*)*/$`,
   ].join('|'),
+  'i',
+)
+
+/**
+ * Words that name a CONTAINER as often as an identifier: `account: 1234` is an
+ * id, but `the api key for the new account: <key>` is a key. These declare a
+ * run public only when no cue word is close -- the cue says what it is.
+ */
+const WEAK_PUBLIC_LEAD = new RegExp(
+  String.raw`(?:\b|_)(?:` +
+    ['clients?', 'issuer', 'subject', 'accounts?', 'tenants?', 'wallet', 'address', 'tasks?'].join('|') +
+    String.raw`)\b["'\`\s:=(,-]{0,8}$`,
   'i',
 )
 
@@ -248,6 +298,19 @@ function vowelRatio(s: string): number {
   return v === null ? 0 : v.length / s.length
 }
 
+/**
+ * A pointer to where a secret lives, not the secret: `arn:aws:secretsmanager:...`,
+ * `vault:kv/app`, `op://vault/item`. Named by scheme, not by any colon -- an
+ * `id:secret` pair (Basic auth, an email:token) is the credential itself.
+ */
+function isReference(v: string): boolean {
+  return /^(?:arn|vault|ssm|secretsmanager|kms|op|sops|gcp|azure|k8s|env|file|keychain):/i.test(v)
+}
+
+function isUuid(t: string): boolean {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(t)
+}
+
 function isKnownPublic(t: string): boolean {
   return KNOWN_PUBLIC.some(([, re]) => re.test(t))
 }
@@ -293,6 +356,12 @@ function decodesToProse(t: string, depth: number): boolean {
     }
   }
   if (printable / bytes.length < 0.95) return false
+  // Prose has spaces. Base64 of JSON or of `k=v` config is data, and data is
+  // judged on its own entropy: its inner values are often the secret, and the
+  // inner scan below misses one whenever a value splits on its own `/`.
+  let spaces = 0
+  for (const b of bytes) if (b === 32) spaces++
+  if (spaces / bytes.length < 0.05) return false
   if (letters / bytes.length < 0.5) return false
   if (vowels / Math.max(letters, 1) < 0.25) return false
   // It decodes to text -- but base64 of a key is still a key, so the decoded
@@ -503,6 +572,7 @@ function assignedIsStructural(value: string, name: string, o: ScanOptions): bool
   if (/[(){}\[\]\\]/.test(value) || value.startsWith('$')) return true
   // A path is never a credential, whatever the name beside it says.
   if (looksLikePath(value, o)) return true
+  if (isReference(value)) return true
   // The VOCABULARY suppressors are gated on the name, for the same reason the
   // one-word exception above is: `TOKEN` and `CREDENTIAL_ID` name config
   // attributes constantly and their values are identifiers, while a value under
@@ -512,11 +582,48 @@ function assignedIsStructural(value: string, name: string, o: ScanOptions): bool
   return looksLikeIdentifier(value, o) || looksLikeName(value, o)
 }
 
+/**
+ * A short vendor prefix in front of a hex body: `shpat_<32 hex>`, `key-<32
+ * hex>`, `SK<32 hex>`, `dop_v1_<64 hex>`. Measured whole, the prefix mixes the
+ * alphabet and the run scores ~0.76 against a 64-symbol ceiling; measured on
+ * its hex body against 16 symbols it scores what the key actually carries.
+ */
+const HEX_PREFIXED = /^([A-Za-z][A-Za-z0-9]{0,7}(?:[_-][A-Za-z0-9]{1,4}){0,2}[_-]?)([0-9a-f]{32,}|[0-9A-F]{32,})$/
+
+/** Prefixes on a hex body that name a digest or a revision, not a key. */
+const HASH_PREFIX = /^(?:sha|sha1|sha256|sha384|sha512|md5|blake2b?|g|commit|rev|v|id)[_-]?$/i
+
+/**
+ * A prefix that names its own body a credential: `acme_api_<body>`,
+ * `sk_<body>`. Not `pk_`: that is the publishable half, meant to be public. The prefix is the announcement, so the body is judged at the
+ * cue bar, alone -- a lowercase-and-digit key has two character classes and
+ * fails the three-class rule the whole run is held to.
+ */
+const SELF_ANNOUNCED = /^((?:[a-z][a-z0-9]{1,15}[_-])?(?:api|key|keys|token|tok|secret|sk|pat)[_-](?:v\d+[_-])?)([A-Za-z0-9]{16,})$/i
+
+function judgeBody(body: string, o: ScanOptions): Verdict | null {
+  if (body.length < o.announcedMinLength) return null
+  if (classesOf(body) < 2) return null
+  if (vowelRatio(body) > 0.35) return null
+  if (looksLikeWords(body) || looksLikeIdentifier(body, o)) return null
+  const ratio = entropyRatioOf(body)
+  return ratio >= o.proximityRatio ? { rule: 'entropy-prefixed', entropy: entropyOf(body), ratio } : null
+}
+
 /** The entropy rule, applied to one candidate run. */
 function judge(t: string, o: ScanOptions, depth: number): Judgement {
   const ratioOf = (): number => entropyRatioOf(t)
   if (isKnownPublic(t)) return { reject: 'known-public', ratio: ratioOf() }
   if (looksLikePath(t, o)) return { reject: 'path', ratio: ratioOf() }
+
+  const hp = HEX_PREFIXED.exec(t)
+  // The prefix must be more than hex letters, or a bare sha256 splits into
+  // `e` + 63 hex and reads as a prefixed key.
+  if (hp !== null && o.hexMinLength > 0 && /[g-zG-Z_-]/.test(hp[1] ?? '') && !HASH_PREFIX.test(hp[1] ?? '')) {
+    const body = hp[2] ?? ''
+    const ratio = entropyRatioOf(body)
+    if (ratio >= o.entropyRatio) return { ok: { rule: 'hex-prefixed', entropy: entropyOf(body), ratio } }
+  }
 
   const isHex = /^[0-9a-fA-F]+$/.test(t)
   if (isHex) {
@@ -609,6 +716,27 @@ export function scanAll(
     }
   }
 
+  for (const [rule, re] of VENDOR_PATTERNS) {
+    re.lastIndex = 0
+    for (const m of body.matchAll(re)) {
+      const value = m[0]
+      const start = m.index
+      if (overlaps(out, start, start + value.length)) continue
+      if (entropyRatioOf(value) < VENDOR_MIN_RATIO) continue
+      const fp = fingerprint(value)
+      if (o.allow.has(fp)) continue
+      push(out, seen, {
+        start,
+        end: start + value.length,
+        value,
+        rule,
+        entropy: entropyOf(value),
+        ratio: entropyRatioOf(value),
+        fingerprint: fp,
+      })
+    }
+  }
+
   ASSIGNED.lastIndex = 0
   for (const m of body.matchAll(ASSIGNED)) {
     const name = m[1] ?? ''
@@ -624,8 +752,10 @@ export function scanAll(
     // called SECRET: an all-lowercase name with no underscore only counts when
     // it IS the credential word, never when the word is buried in a longer one.
     if (/^[a-z]+$/.test(name) && !/^(?:secret|password|passwd|token|credential|apikey)s?$/.test(name)) continue
-    // A published identifier, and a value spelled out of words, are not keys.
-    if (isKnownPublic(value)) continue
+    // A published identifier, and a value spelled out of words, are not keys --
+    // except a UUID under a name that is not an id: many vendors issue their
+    // API keys as UUIDs, and `API_KEY=<uuid>` says which one this is.
+    if (isKnownPublic(value) && !(isUuid(value) && !/_?IDS?$/i.test(name))) continue
     if (assignedIsStructural(value, name, o)) continue
     // `http_tokens = "required"` is config; `PASSWORD=correcthorse` is not.
     // A one-word value is let past only when the name is a weak signal --
@@ -642,6 +772,45 @@ export function scanAll(
       end,
       value,
       rule: `assigned:${name}`,
+      entropy: entropyOf(value),
+      ratio: entropyRatioOf(value),
+      fingerprint: fp,
+    })
+  }
+
+  // A cue word directly announcing the next run. Like the assignment rule this
+  // reads what the text CALLS the value, so it runs on every door; the value
+  // still has to clear an entropy bar, lower for a value a person chose.
+  ANNOUNCED.lastIndex = 0
+  for (const m of body.matchAll(ANNOUNCED)) {
+    const cue = (m[1] ?? '').replace(/[\s_-]+/g, '')
+    const value = (m[2] ?? '').replace(/["'`]?[.,;:)\]]*$/, '')
+    const start = m.index + m[0].length - (m[2] ?? '').length
+    const end = start + value.length
+    if (value.length < 6 || overlaps(out, start, end)) continue
+    if (/^(?:<|\[|\$\{?[A-Za-z_]|changeme$|placeholder$|xxx+$|\*+$|null$|true$|false$|none$|redacted$)/i.test(value)) continue
+    if (/:\/\//.test(value) || isReference(value) || looksLikePath(value, o)) continue
+    if (isKnownPublic(value) && !isUuid(value)) continue
+    const chosen = CHOSEN.test(cue)
+    // `river-tiger-summer-horse`: under a passphrase cue, words are the point.
+    const passphrase = /^passphrases?$/i.test(cue) && /^[a-z]+(?:[-_.][a-z]+){3,}$/i.test(value)
+    // A UUID's entropy is fixed by its format (~0.72); announced, it is a key.
+    if (!passphrase && !isUuid(value)) {
+      if (classesOf(value) < 2) continue
+      // Prose is not code: `with its own password: rds_password` names the
+      // attribute. Only an assignment keeps the one-word password exception.
+      if (/^[a-z]+$/i.test(value) || looksLikeWords(value) || looksLikeIdentifier(value, o) || looksLikeName(value, o)) continue
+      if (chosen ? value.length < 6 : value.length < o.announcedMinLength) continue
+      if (entropyRatioOf(value) < (chosen ? 0.55 : o.proximityRatio)) continue
+      if (assignedIsStructural(value, chosen ? 'password' : 'token', o)) continue
+    }
+    const fp = fingerprint(value)
+    if (o.allow.has(fp)) continue
+    push(out, seen, {
+      start,
+      end,
+      value,
+      rule: `announced:${cue.toLowerCase()}`,
       entropy: entropyOf(value),
       ratio: entropyRatioOf(value),
       fingerprint: fp,
@@ -677,7 +846,12 @@ export function scanAll(
     const lead = body.slice(Math.max(0, start - PUBLIC_LEAD_WINDOW), start)
     const inherited = declaredEnd >= 0 && /^[\s,]+$/.test(body.slice(declaredEnd, start))
     declaredEnd = -1
-    if (PUBLIC_LEAD.test(lead) || inherited) {
+    // A cue outranks a weak declaration only for a run that is not id-shaped:
+    // `token against account <32 hex>` is a Cloudflare account id, while
+    // `api key for the new account: lin_api_<mixed>` is the key.
+    const cueNear = distance >= 0 && distance <= o.proximityWindow
+    const weakDeclared = WEAK_PUBLIC_LEAD.test(lead) && !(cueNear && !/^[0-9a-fA-F-]+$/.test(value))
+    if (PUBLIC_LEAD.test(lead) || weakDeclared || inherited) {
       declaredEnd = end
       if (depth === 0 && value.length >= o.minLength) {
         const ratio = entropyRatioOf(value)
@@ -710,6 +884,12 @@ export function scanAll(
         depth,
       )
       if (lowered.ok !== undefined) j = { ok: { ...lowered.ok, rule: `${lowered.ok.rule}-cue` } }
+    }
+
+    if (j.ok === undefined) {
+      const sa = SELF_ANNOUNCED.exec(value)
+      const v = sa === null ? null : judgeBody(sa[2] ?? '', o)
+      if (v !== null) j = { ok: v }
     }
 
     if (j.ok === undefined) {
