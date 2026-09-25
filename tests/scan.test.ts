@@ -167,3 +167,12 @@ test('shapeRules off records no near miss, because no shape rule judged one', ()
   const text = 'HTTPCode_ELB_5XX_Count and 0de381fa1b284946a0f3b7c25e4d19cc'
   expect(scanAll(text, { shapeRules: false }).near.length).toBe(0)
 })
+
+test('a vendor prefix of words does not make a key a name', () => {
+  // `<vendor>_<kind>_<key>`: two word segments carried the whole run past
+  // looksLikeName. Fabricated: base64 of a Laravel-style {iv,value,mac,tag}.
+  const key = 'testmo_api_' + 'eyJpdiI6IlZZTUtNZnJaVTF1WjlONlJqcTdCWVE9PSIsInZhbHVlIjoiWGt5UThkbUgzV1NvZXRMZnJycE11UGxMN2sveDFYcnZlWHVkZ1FyOFE0MD03ZmJoSmROVmV2d1dycnZGNDVXY2FnPT0iLCJtYWMiOiI0MjljNGZkMmQ5YzBiNWQ5MGJlNzRmYmJjOTIzOWVmY2Q0NmM3YTNiNDAyNGJiYjQxNWU5YWEwOTE2ZWUyZjYyIiwidGFnIjoiIn0='
+  expect(scan(key).length).toBe(1)
+  expect(scan(`generated the following API key:\n${key}`).length).toBe(1)
+  expect(scan('service_watchtower_processor_7d9f8c6b54_xk2mq').length).toBe(0)
+})
