@@ -38,6 +38,7 @@ const SECRETS: readonly (readonly [string, string])[] = [
   ['bearer header', 'Authorization: Bearer pZm9vYmFyMTIzNDU2Nzg5MEFCQ0RFRkdISUpLTA'],
   ['prose-announced key', "here's a fake api key to use with a fake api called apitester OAJdjljiaw82nd73jlad00d02jld892gygo"],
   ['weak key after a colon', 'api key: Qw3rty7UiOp1AsDfGh5JkLzX'],
+  ['vendor-prefixed key', 'testmo_api_' + 'eyJpdiI6IlZZTUtNZnJaVTF1WjlONlJqcTdCWVE9PSIsInZhbHVlIjoiWGt5UThkbUgzV1NvZXRMZnJycE11UGxMN2sveDFYcnZlWHVkZ1FyOFE0MD03ZmJoSmROVmV2d1dycnZGNDVXY2FnPT0iLCJtYWMiOiI0MjljNGZkMmQ5YzBiNWQ5MGJlNzRmYmJjOTIzOWVmY2Q0NmM3YTNiNDAyNGJiYjQxNWU5YWEwOTE2ZWUyZjYyIiwidGFnIjoiIn0='],
   ['token announced in chat', 'my token is 8vQm2XpLzRf7TnWbHy4CsGu9 — use it for the staging call'],
 ]
 
@@ -65,6 +66,7 @@ const CLEAN: readonly (readonly [string, string])[] = [
   ['iso timestamps', '2026-09-18T11:20:34.512Z 2026-09-17T08:00:00.000Z'],
   ['docker image ref', 'ghcr.io/pleejr/service-polling:sha-4d8e1f0'],
   ['k8s resource name', 'service-watchtower-processor-7d9f8c6b54-xk2mq'],
+  ['snake resource name', 'service_watchtower_processor_7d9f8c6b54_xk2mq'],
   ['npm integrity absent', 'node_modules/@anthropic-ai/claude-code/package.json'],
   ['jira keys', 'SER-642 SER-659 SER-673 DEVOPS-1204'],
   ['account id', '123456789012'],

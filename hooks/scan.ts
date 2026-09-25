@@ -402,11 +402,14 @@ function looksLikeIdentifier(t: string, o: ScanOptions): boolean {
  * A hyphen- or underscore-joined name (`service-watchtower-processor-7d9f8c-xk2mq`,
  * a Kubernetes pod, a resource label): most of its segments are lowercase words.
  */
-function looksLikeName(t: string): boolean {
+function looksLikeName(t: string, o: ScanOptions): boolean {
   const segs = t.split(/[-_]/).filter((s) => s.length > 0)
   if (segs.length < 3) return false
   const words = segs.filter((s) => /^[a-z]{3,}$/.test(s) && /[aeiou]/.test(s)).length
-  return words / segs.length >= 0.5
+  if (words / segs.length < 0.5) return false
+  // ...and no segment is itself key material: `<vendor>_<kind>_<key>` is two
+  // words and a key, and the words must not carry the key past.
+  return segs.every((s) => segmentIsBenign(s, o))
 }
 
 /** The entropy rule, applied to one candidate run. */
@@ -506,7 +509,7 @@ function assignedIsStructural(value: string, name: string, o: ScanOptions): bool
   // `PASSWORD` or `SECRET` is allowed to be spelled out of words -- a password a
   // person chose usually is, and it is still a password.
   if (/secret|password|passwd|private_?key/i.test(name)) return false
-  return looksLikeIdentifier(value, o) || looksLikeName(value)
+  return looksLikeIdentifier(value, o) || looksLikeName(value, o)
 }
 
 /** The entropy rule, applied to one candidate run. */
@@ -531,7 +534,7 @@ function judge(t: string, o: ScanOptions, depth: number): Judgement {
   if (vowelRatio(t) > 0.35) return { reject: 'vowels', ratio: ratioOf() }
   if (looksLikeWords(t)) return { reject: 'words', ratio: ratioOf() }
   if (looksLikeIdentifier(t, o)) return { reject: 'identifier', ratio: ratioOf() }
-  if (looksLikeName(t)) return { reject: 'name', ratio: ratioOf() }
+  if (looksLikeName(t, o)) return { reject: 'name', ratio: ratioOf() }
   if (decodesToProse(t, depth)) return { reject: 'base64-prose', ratio: ratioOf() }
   const ratio = entropyRatioOf(t)
   if (ratio < o.entropyRatio) return { reject: 'ratio', ratio }
