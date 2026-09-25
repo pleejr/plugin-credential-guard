@@ -151,6 +151,15 @@ let index: VaultIndex | null = null
 /** Caught this session and not yet put to the person. */
 const pending = new Map<string, { rule: string; value: string }>()
 const offered = new Set<string>()
+/**
+ * Accepted for the Keychain but refused by it, held to try again. A session
+ * outside the login window's security session -- over SSH, under a detached
+ * multiplexer -- cannot unlock the login Keychain, and `security` answers
+ * -25308 until someone does. The value stays in memory only: there is nowhere
+ * safer to put it while the Keychain is shut.
+ */
+const deferred = new Map<string, { label: string; rule: string; value: string }>()
+let retrying = false
 let askingOff = false
 let draining = false
 let count = 0
@@ -231,13 +240,62 @@ async function save($: EngineInterface, fp: string, label: string, rule: string,
   }
   if (!r.ok) {
     $.ui.log(`the Keychain refused #${fp} — ${r.error}`)
+    const wasHeld = deferred.has(fp)
+    deferred.set(fp, { label, rule, value })
+    // A log line is dim and scrolls away; a refusal is the one outcome the
+    // person needs to know about, so it is said once, in words, as a toast.
+    if (!wasHeld) {
+      $.ui.toast(
+        isKeychainLocked(r.error)
+          ? `credential-guard: your login Keychain is locked in this session (it can't ask for your password here, e.g. over SSH). ` +
+              `[secret:${label}] works for now and is saved as soon as the Keychain unlocks.`
+          : `credential-guard: the Keychain didn't save [secret:${label}] (${plainReason(r.error)}). It works for now; I'll try again on your next prompt.`,
+        { timeoutMs: 15_000 },
+      )
+    }
     return false
   }
+  const wasHeld = deferred.delete(fp)
   const idx = await loadIndex($)
   idx[fp] = { label, rule, savedAt: Date.now() }
   await $.store.set(INDEX_KEY, idx)
   $.ui.log(`saved #${fp} to your login Keychain as [secret:${label}]`)
+  if (wasHeld) $.ui.toast(`credential-guard: saved [secret:${label}] to your login Keychain.`, { timeoutMs: 8_000 })
   return true
+}
+
+/** errSecInteractionNotAllowed: no one can be asked to unlock the Keychain here. */
+function isKeychainLocked(error: string): boolean {
+  return /User interaction is not allowed|-25308|errSecInteractionNotAllowed/i.test(error)
+}
+
+/** The refusal without `security`'s API name and status code. */
+function plainReason(error: string): string {
+  const line = error.split('\n')[0] ?? error
+  return line.replace(/^security:\s*/, '').replace(/^[A-Za-z]+\s*\([^)]*\):\s*/, '').replace(/\s*\(?-?\d{4,}\)?\.?$/, '').trim() || 'no reason given'
+}
+
+/** Tries each held secret again, outside the dispatch that noticed. */
+async function retryDeferred($: EngineInterface): Promise<void> {
+  if (retrying || deferred.size === 0) return
+  retrying = true
+  try {
+    for (const [fp, item] of [...deferred.entries()]) {
+      const saved = await save($, fp, item.label, item.rule, item.value)
+      // Still shut: the rest will be refused for the same reason.
+      if (!saved) break
+    }
+  } finally {
+    retrying = false
+  }
+}
+
+/** Queues a retry of held secrets, if any, for just after this dispatch. */
+function scheduleRetry($: EngineInterface): void {
+  if (deferred.size === 0) return
+  $.clock.after(50, () => {
+    retryDeferred($).catch((e: unknown) => $.ui.log(`the Keychain retry failed — ${String(e)}`))
+  })
 }
 
 /** Puts each caught secret to the person, one at a time, outside the dispatch. */
@@ -518,6 +576,8 @@ export const register: Register = (on, options) => {
 
   // --- what the person typed or pasted --------------------------------------
   on('prompt.submit', async ($, e, next) => {
+    // Each prompt is a chance the Keychain was unlocked since the last refusal.
+    scheduleRetry($)
     if (onPrompt === 'off') return next(e)
     const surface = promptSurface(e.origin.kind, promptOnly)
     if (surface === 'skip') return next(e)
