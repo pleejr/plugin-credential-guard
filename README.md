@@ -313,6 +313,15 @@ value.
 
 Set `keychain` to `auto` to save without being asked, or `off` to never ask.
 
+**When the Keychain refuses.** A session outside the login window's security
+session — over SSH, or under a multiplexer started from one — cannot unlock the
+login Keychain, and `security` answers `User interaction is not allowed`
+(-25308) to every write. The plugin then says so once, as a toast, keeps the
+secret queued in memory, and tries again each time you submit a prompt, so an
+unlock on the Mac itself, or `security unlock-keychain` in the same session, is
+enough for it to land. The placeholder keeps working in the meantime. A secret
+still queued when the session ends is gone: there is nowhere safer to put it.
+
 ## The near-miss ledger
 
 The 0.85 cut was chosen against a corpus I wrote. The ledger says what *your*
@@ -562,10 +571,11 @@ model as context. Silence would reproduce the bug the fallback exists for.
   and anything they write. `rehydrateEgress` is off by default so a placeholder
   is never expanded into an MCP call, `WebFetch` or `WebSearch`; every
   substitution writes a line in the transcript naming the tool and the count.
-- **The Keychain write path has not been exercised end to end in a live
-  session** — it needs the interactive dialog. The `security` argv form was
-  probed directly (write, read back, delete, exit 0) and the plugin's wiring is
-  covered by `tests/vault.test.ts` against a faked `process.run`.
+- **The Keychain write path was first exercised live on 2026-09-25, over SSH,**
+  and refused with -25308, as above. A write from a session at the Mac itself
+  has still not been observed end to end; `tests/vault.test.ts` and
+  `tests/keychain-refused.test.ts` cover the wiring against a faked
+  `process.run`.
 - **Reading a saved value may raise a macOS authorization prompt** the first
   time another binary asks for the item.
 - **It does not read the model's own output.** A secret the model composes
