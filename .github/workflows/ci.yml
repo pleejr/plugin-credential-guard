@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # `claude plugin test` refuses to run hooks modules without it; no API
+      # key is needed, the runner is local.
+      CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1'
+      # Pinned: hooks modules are early access and their API moves between builds.
+      CLAUDE_CODE_VERSION: '2.1.282'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+      - name: Tests
+        run: claude plugin test
+      - name: Detector bench
+        run: node --experimental-strip-types --no-warnings bench/corpus.ts
