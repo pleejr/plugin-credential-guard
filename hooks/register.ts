@@ -10,8 +10,8 @@
  *      macOS Keychain for it
  *   4. the model writes the placeholder back into a tool call, and the plugin
  *      substitutes the real value on the way down, so the command works
- *   5. a saved secret is listed to the model next session as `[secret:NAME]`,
- *      so step 4 works in every session after this one
+ *   5. with `announceSecrets` on, a saved secret is listed to the model next
+ *      session as `[secret:NAME]`, so step 4 works in every session after this one
  *
  * `promptOnly` collapses the watching to one door -- only what the person typed
  * and submitted is scanned -- and leaves the rest of the cycle alone. See
@@ -486,12 +486,17 @@ export const register: Register = (on, options) => {
   })
 
   // --- tell the model which secrets it may reference ------------------------
-  on('prompt.context', async ($, e, next) => {
-    const r = await next(e)
-    const text = indexBlock(await loadIndex($))
-    if (text === undefined) return r
-    return { ...r, blocks: [...r.blocks, { name: 'credentialGuardSecrets', text }] }
-  })
+  // Opt-in: where the built-in sec-default plugin is seated outermost (managed
+  // settings, Team and Enterprise) it sends prompt.context past every user
+  // plugin, and registering here only earns a "hook was skipped" banner.
+  if (bool(options.announceSecrets, false)) {
+    on('prompt.context', async ($, e, next) => {
+      const r = await next(e)
+      const text = indexBlock(await loadIndex($))
+      if (text === undefined) return r
+      return { ...r, blocks: [...r.blocks, { name: 'credentialGuardSecrets', text }] }
+    })
+  }
 
   on('command.run', { command: 'credential-guard' }, async ($, e, next) => {
     if (!ledgerOn) return { text: 'credential-guard: the ledger is off (`ledger` option).' }
