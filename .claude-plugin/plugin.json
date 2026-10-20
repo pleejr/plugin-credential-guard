@@ -135,6 +135,12 @@
       "description": "Also substitute inside MCP tool calls, WebFetch and WebSearch, whose arguments are sent off this machine.",
       "default": false
     },
+    "announceSecrets": {
+      "type": "boolean",
+      "title": "List saved secrets to the model",
+      "description": "At the start of each prompt, tell the model the [secret:NAME] placeholders saved to the Keychain in earlier sessions. Off by default: where Claude Code's built-in sec-default plugin is seated first (a machine with managed settings, or a Team or Enterprise organization) it passes prompt.context on past every user plugin, so the list never arrives and the session banner reports the hook as skipped.",
+      "default": false
+    },
     "proximityWindow": {
       "type": "number",
       "title": "Cue proximity window",

@@ -21,8 +21,9 @@ entropy is one clause of the test, and the weakest one.
    Keychain for it.
 4. The model writes the placeholder back into a tool call; the plugin
    substitutes the real value on the way down, so the command works.
-5. A saved secret is listed to the model at the start of every later session as
-   `[secret:NAME]`, so step 4 keeps working after this session ends.
+5. With `announceSecrets` on, a saved secret is listed to the model at the start
+   of every later session as `[secret:NAME]`, so step 4 keeps working after this
+   session ends. It is off by default — see the `sec-default` limit below.
 
 So a redacted secret is **not destroyed** — it is moved out of the conversation
 and referenced by placeholder. `aws configure set aws_secret_access_key
@@ -36,7 +37,7 @@ and referenced by placeholder. `aws configure set aws_secret_access_key
 | A tool call's own arguments | `tool.call` input | warn | off |
 | What you typed or pasted | `prompt.submit` | redact | **on** |
 | What a peer session, relay or webhook delivered | `session.receive` | redact | **on** |
-| Which secrets the model may reference | `prompt.context` | listed by name | — |
+| Which secrets the model may reference | `prompt.context` | off (`announceSecrets`) | — |
 
 `promptOnly` closes every door but the third — see below.
 
@@ -459,6 +460,7 @@ strips types. `npm run typecheck` is what catches it.
 | `keychain` | ask | `ask`, `auto` or `off` |
 | `rehydrate` | true | Substitute a placeholder back into a tool call |
 | `rehydrateEgress` | false | Also substitute for MCP tools, `WebFetch`, `WebSearch` |
+| `announceSecrets` | false | List Keychain-saved `[secret:NAME]` placeholders to the model each prompt |
 
 Take a fingerprint out of a redaction marker and put it in `allow` to stop
 flagging that one value.
@@ -576,6 +578,16 @@ model as context. Silence would reproduce the bug the fallback exists for.
   has still not been observed end to end; `tests/vault.test.ts` and
   `tests/keychain-refused.test.ts` cover the wiring against a faked
   `process.run`.
+- **The saved-secret list does not reach the model under `sec-default`.**
+  Claude Code's built-in `cc-plugin-sec-default` seats itself outermost on a
+  machine with managed settings and for Team and Enterprise organizations, and
+  it sends `prompt.context` (with every other model-context event) on past the
+  user tier. A user-settings `prependPlugins` cannot reorder it there — only
+  managed settings can. Read from 2.1.304 on 2026-10-20: with the hook
+  registered, every session banner reported `its prompt.context hook was
+  skipped`. Hence `announceSecrets` is off by default; turn it on where the
+  plugin is not seated. Redaction, the Keychain offer and substitution use
+  other events and are unaffected.
 - **Reading a saved value may raise a macOS authorization prompt** the first
   time another binary asks for the item.
 - **It does not read the model's own output.** A secret the model composes
